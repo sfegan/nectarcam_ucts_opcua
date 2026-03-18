@@ -1,0 +1,148 @@
+AUX-DIAG DEFINITIONS ::= BEGIN
+
+-- Template for Aux Registers used by WRPC
+-- Based on the WR-WRPC-MIB
+-- Adam Wujek, BE-CO-HT, CERN
+
+-- IMPORTS: Include definitions from other mibs here
+IMPORTS
+        OBJECT-TYPE, Unsigned32, MODULE-IDENTITY FROM SNMPv2-SMI
+        InetAddressType, InetAddress FROM INET-ADDRESS-MIB
+        MacAddress, PhysAddress FROM SNMPv2-TC
+        wrWrpcMIB FROM WR-WRPC-MIB;
+
+wrpcAuxDiag MODULE-IDENTITY
+    LAST-UPDATED "201607151000Z"
+    ORGANIZATION "CERN"
+    CONTACT-INFO "postal:   BE-CO-HT, CERN, Geneva
+                  email:    ht-drivers@cern.ch
+                 "
+    DESCRIPTION  "Template of MIB for White Rabbit WRPC aux registers
+                 "
+
+    REVISION     "201607151000Z"
+    DESCRIPTION
+        "First revision."
+
+    ::= { wrWrpcMIB 2 }
+
+-- put your assigned ID number in the line below
+wrpcAuxDiagId1                 OBJECT IDENTIFIER ::= { wrpcAuxDiag 1 }
+-- put the version number in the line below
+wrpcAuxDiagVersion101          OBJECT IDENTIFIER ::= { wrpcAuxDiagId1 1 }
+
+-- ****************************************************************************
+
+wrpcAuxDiag101RoTable          OBJECT-TYPE
+    SYNTAX                     SEQUENCE OF WrpcAuxDiag101RoEntry
+    MAX-ACCESS                 not-accessible
+    STATUS                     current
+    DESCRIPTION
+            "Table with read only registers"
+    ::= { wrpcAuxDiagVersion101 1 }
+
+wrpcAuxDiag101RoEntry          OBJECT-TYPE
+    SYNTAX                     WrpcAuxDiag101RoEntry
+    MAX-ACCESS                 not-accessible
+    STATUS                     current
+    DESCRIPTION
+            "An entry for read only registers"
+    INDEX   { wrpcAuxDiag101RoIndex }
+    ::= { wrpcAuxDiag101RoTable 1 }
+
+WrpcAuxDiag101RoEntry ::=
+    SEQUENCE {
+        wrpcAuxDiag101RoIndex              Unsigned32,
+        wrpcAuxDiag101RoRegNb	           Unsigned32,
+        wrpcAuxDiagDstIpAddr               IpAddress,
+        wrpcAuxDiagDstMacAddrH             PhysAddress,
+        wrpcAuxDiagDstMacAddrL             PhysAddress,
+        wrpcAuxDiagDstPort                 Unsigned32,
+        wrpcAuxDiagEventCnt                Unsigned32,
+        wrpcAuxDiagBusyCnt                 Unsigned32,
+        wrpcAuxDiagStatus                  OCTET STRING,
+        wrpcAuxDiagThrottle                Unsigned32
+  }
+
+wrpcAuxDiag101RoIndex          OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 not-accessible
+    STATUS                     current
+    DESCRIPTION
+            "Index for wrpcAuxDiag101RoTable"
+    ::= { wrpcAuxDiag101RoEntry 1 }
+
+wrpcAuxDiag101RoRegNb	       OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Number of registers available in the wrpcAuxDiag101RoTable"
+    ::= { wrpcAuxDiag101RoEntry 2 }
+
+wrpcAuxDiagDstIpAddr           OBJECT-TYPE
+    SYNTAX                     IpAddress
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Destination IP address"
+    ::= { wrpcAuxDiag101RoEntry 3 }
+
+wrpcAuxDiagDstMacAddrH         OBJECT-TYPE
+    SYNTAX                     PhysAddress
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Destination MAC address 32 msb"
+    ::= { wrpcAuxDiag101RoEntry 4 }
+
+wrpcAuxDiagDstMacAddrL         OBJECT-TYPE
+    SYNTAX                     PhysAddress
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Destination MAC address 16 lsb"
+    ::= { wrpcAuxDiag101RoEntry 5 }
+
+wrpcAuxDiagDstPort             OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Destination IP port"
+    ::= { wrpcAuxDiag101RoEntry 6 }
+
+wrpcAuxDiagEventCnt            OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Event counter"
+    ::= { wrpcAuxDiag101RoEntry 7 }
+
+wrpcAuxDiagBusyCnt             OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Busy counter"
+    ::= { wrpcAuxDiag101RoEntry 8 }
+
+wrpcAuxDiagStatus              OBJECT-TYPE
+    SYNTAX                     OCTET STRING
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Status"
+    ::= { wrpcAuxDiag101RoEntry 9 }
+
+wrpcAuxDiagThrottle            OBJECT-TYPE
+    SYNTAX                     Unsigned32
+    MAX-ACCESS                 read-only
+    STATUS                     current
+    DESCRIPTION
+            "Throttle value"
+    ::= { wrpcAuxDiag101RoEntry 10 }
+
+
+END
