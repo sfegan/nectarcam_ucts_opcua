@@ -20,15 +20,27 @@
         },
         {
             "oid":         "AUX-DIAG::wrpcAuxDiagDstMacAddrH.1",
-            "opcua_name":  "DstMacAddr",
+            "opcua_name":  "DstMacAddr_32MSB",
             "opcua_type":  "String",
-            "description": "Destination MAC address of UCTS timestamps"
+            "description": "Destination MAC address of UCTS timestamps (32 MSB)"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagDstMacAddrL.1",
+            "opcua_name":  "DstMacAddr_16LSB",
+            "opcua_type":  "String",
+            "description": "Destination MAC address of UCTS timestamps (16 LSB)"
         },
         {
             "oid":         "AUX-DIAG::wrpcAuxDiagDstPort.1",
             "opcua_name":  "DstPort",
             "opcua_type":  "Int32",
             "description": "Destination port of UCTS timestamps"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagEventCnt.1",
+            "opcua_name":  "EventCount",
+            "opcua_type":  "Int32",
+            "description": "Number of triggers accepted during the run"
         },
         {
             "oid":         "WR-WRPC-MIB::wrpcPortLinkStatus.0",
@@ -49,9 +61,15 @@
             "description": "Status of TiCkS board (format, firmware, SPI, …)"
         },
         {
-            "oid":         "AUX-DIAG::wrpcAuxDiagThrottle.1",
+            "oid":         "WR-WRPC-MIB::wrpcTemperatureValue.1",
             "opcua_name":  "Temperature",
             "opcua_type":  "Float",
+            "description": "Temperature of the TiCkS PCB"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagThrottle.1",
+            "opcua_name":  "Throttle",
+            "opcua_type":  "Int64",
             "description": "Temperature of the TiCkS PCB"
         },
         {
