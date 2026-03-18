@@ -21,13 +21,13 @@
         {
             "oid":         "AUX-DIAG::wrpcAuxDiagDstMacAddrH.1",
             "opcua_name":  "DstMacAddr_32MSB",
-            "opcua_type":  "String",
+            "opcua_type":  "ByteString",
             "description": "Destination MAC address of UCTS timestamps (32 MSB)"
         },
         {
             "oid":         "AUX-DIAG::wrpcAuxDiagDstMacAddrL.1",
             "opcua_name":  "DstMacAddr_16LSB",
-            "opcua_type":  "String",
+            "opcua_type":  "ByteString",
             "description": "Destination MAC address of UCTS timestamps (16 LSB)"
         },
         {
