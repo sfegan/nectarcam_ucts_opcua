@@ -1,0 +1,96 @@
+{
+    "ip":            "127.0.0.1",
+    "port":          1161,
+    "community":     "public",
+    "description":   "UCTS SNMP Device",
+    "opcua_path":    "Monitoring",
+    "poll_interval": 1,
+    "oids": [
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagBusyCnt.1",
+            "opcua_name":  "BusyCount",
+            "opcua_type":  "Int32",
+            "description": "Number of busy triggers rejected during the run"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagDstIpAddr.1",
+            "opcua_name":  "DstIpAddr",
+            "opcua_type":  "String",
+            "description": "Destination IP address of UCTS timestamps"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagDstMacAddrH.1",
+            "opcua_name":  "DstMacAddr",
+            "opcua_type":  "String",
+            "description": "Destination MAC address of UCTS timestamps"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagDstPort.1",
+            "opcua_name":  "DstPort",
+            "opcua_type":  "Int32",
+            "description": "Destination port of UCTS timestamps"
+        },
+        {
+            "oid":         "WR-WRPC-MIB::wrpcPortLinkStatus.0",
+            "opcua_name":  "PortLinkStatus",
+            "opcua_type":  "String",
+            "description": "Port link status"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagStatus.1",
+            "opcua_name":  "State",
+            "opcua_type":  "Int32",
+            "description": "TiCkS state (1= Running, 0 = Online, 2=Unknown)"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagStatus.1",
+            "opcua_name":  "Status",
+            "opcua_type":  "String",
+            "description": "Status of TiCkS board (format, firmware, SPI, …)"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagThrottle.1",
+            "opcua_name":  "Temperature",
+            "opcua_type":  "Float",
+            "description": "Temperature of the TiCkS PCB"
+        },
+        {
+            "oid":         "WR-WRPC-MIB::wrpcTimeTAI.0",
+            "opcua_name":  "TimeTAI",
+            "opcua_type":  "Int64",
+            "description": "TAI time"
+        },
+        {
+            "oid":         "WR-WRPC-MIB::wrpcTimeTAIString.0",
+            "opcua_name":  "TimeTAIString",
+            "opcua_type":  "String",
+            "description": "TAI time string"
+        },
+        {
+            "oid":         "WR-WRPC-MIB::wrpcTimeSystemUptime.0",
+            "opcua_name":  "UpTime",
+            "opcua_type":  "String",
+            "description": "Uptime of the UCTS"
+        },
+        {
+            "oid":         "WR-WRPC-MIB::wrpcVersionSwVersion.0",
+            "opcua_name":  "WrpcSwVersion",
+            "opcua_type":  "String",
+            "description": "Version of the wrpc software"
+        },
+        {
+            "oid":         "AUX-DIAG::wrpcAuxDiagStatus.1",
+            "opcua_name":  "FirmwareVersion",
+            "opcua_type":  "String",
+            "description": "Version of the TiCkS firmware"
+        }
+    ],
+    "constants": [
+        {
+            "opcua_name":  "SoftwareVersion",
+            "opcua_type":  "String",
+            "description": "Version of the UCTS controller",
+            "value": "2.0.0"
+        }
+    ]
+}
