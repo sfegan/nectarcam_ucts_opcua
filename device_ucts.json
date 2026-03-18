@@ -105,6 +105,12 @@
     ],
     "constants": [
         {
+            "opcua_name":  "DstMacAddr",
+            "opcua_type":  "String",
+            "description": "Destination MAC address of UCTS timestamps",
+            "value":       "00:00:00:00:00:00"
+        },
+        {
             "opcua_name":  "SoftwareVersion",
             "opcua_type":  "String",
             "description": "Version of the UCTS controller",
