@@ -7,12 +7,19 @@ Three-class design, each with a single responsibility:
 
   UCTSPoller(SNMPPoller)
       Pure SNMP monitoring.  Overrides the three SNMPPoller hooks:
-        build_variable_specs()  - removes internal MAC half-OIDs; adds
-                                  DstMacAddr, State, FirmwareVersion.
-        write_variables()       - transforms raw SNMP values before publication
-                                  (MAC merge, Status byte-shift, Temperature
-                                  div-10, PortLinkStatus enum, TimeTAIString
-                                  ISO-8601 reformat).
+        build_variable_specs()   - local (underscore-prefixed) OIDs are already
+                                   excluded by the base class; derived variables
+                                   (Status, DstMacAddr, State, FirmwareVersion,
+                                   Temperature) are declared as constants with
+                                   value=None so the base creates them with
+                                   BadWaitingForInitialData.
+        write_variables()        - computes derived store entries from local OIDs
+                                   when their sources are Good, or delegates
+                                   staleness to self._apply_staleness() when they
+                                   are not.  Applies in-place transformations to
+                                   PortLinkStatus and TimeTAIString.  Calls
+                                   super().write_variables() to perform the actual
+                                   OPC UA writes.
         on_address_space_ready() - nothing extra; pure monitoring only.
 
   UCTSCommander
@@ -40,23 +47,32 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
       Monitoring/          <- UCTSPoller device node (self._device_node)
           BusyCount
           DstIpAddr
-          DstMacAddr       <- merged from MSB+LSB OctetStrings
+          DstMacAddr       <- derived: merged from _DstMacAddr_32MSB/_DstMacAddr_16LSB
           DstPort
           EventCount
-          FirmwareVersion  <- derived from Status bits 23:16
-          PortLinkStatus   <- enum mapped to "na"/"down"/"up"
-          State            <- derived from Status bit 7
-          Status           <- raw uint32 as decimal string
-          Temperature      <- tenths-of-C divided by 10 -> float
+          FirmwareVersion  <- derived: from Status bits 23:16
+          PortLinkStatus   <- transformed: INTEGER enum → "na"/"down"/"up"
+          State            <- derived: from Status bit 7
+          Status           <- derived: raw uint32 as decimal string
+          Temperature      <- derived: _IntegerTemperature (Int32) / 10 → Float °C
           Throttle
           TimeTAI
-          TimeTAIString    <- ISO 8601 reformat
+          TimeTAIString    <- transformed: ISO 8601 with T separator
           UpTime
           WrpcSwVersion
           SoftwareVersion  <- constant
           host             <- built-in: SNMP device IP
           port             <- built-in: SNMP port
           cls_state        <- built-in: 0=offline 1=online
+          polling_timestamp  <- built-in
+          polling_age        <- built-in
+          polling_interval   <- built-in
+
+  Internal (local) OIDs — polled and held in self._store, no OPC UA node:
+      _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)
+      _DstMacAddr_16LSB    <- 2 LSB of destination MAC (ByteString)
+      _RawStatus           <- uint32 status word as bytes (ByteString)
+      _IntegerTemperature  <- raw tenths-of-°C integer from device (Int32)
 
 Usage
 -----
@@ -86,6 +102,7 @@ import asyncio
 import logging
 import socket
 import sys
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -96,6 +113,7 @@ try:
         NodeSpec,
         OPCUAServer,
         SNMPPoller,
+        StoreEntry,
         _cast_to_ua,
         setup_logging,
     )
@@ -116,9 +134,17 @@ log = logging.getLogger("ucts_server")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardcoded UCTS device configuration
-# Mirrors device_ucts_resolved_oids.json exactly; all OIDs already numeric.
-# DstMacAddr_32MSB / DstMacAddr_16LSB are polled but suppressed from direct
-# OPC UA publication -- write_variables() merges them into DstMacAddr.
+# All OIDs already in dotted-decimal numeric form.
+#
+# Local (underscore-prefixed) OIDs are polled and held in self._store but
+# never published as OPC UA nodes:
+#   _DstMacAddr_32MSB / _DstMacAddr_16LSB  → merged into DstMacAddr
+#   _RawStatus                              → decoded into Status/State/FirmwareVersion
+#   _IntegerTemperature                     → divided by 10 → Temperature (Float °C)
+#
+# Derived variables are declared as constants with value=None so the base
+# class creates their OPC UA nodes with BadWaitingForInitialData; they are
+# computed and their store entries updated in write_variables().
 # ─────────────────────────────────────────────────────────────────────────────
 
 _UCTS_CONFIG: dict = {
@@ -142,16 +168,14 @@ _UCTS_CONFIG: dict = {
             "description": "Destination IP address of UCTS timestamps",
         },
         {
-            # Internal: 4 MSB of destination MAC -- merged into DstMacAddr
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
-            "opcua_name":  "DstMacAddr_32MSB",
+            "opcua_name":  "_DstMacAddr_32MSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 32 MSB of destination MAC address",
         },
         {
-            # Internal: 2 LSB of destination MAC -- merged into DstMacAddr
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
-            "opcua_name":  "DstMacAddr_16LSB",
+            "opcua_name":  "_DstMacAddr_16LSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 16 LSB of destination MAC address",
         },
@@ -168,10 +192,8 @@ _UCTS_CONFIG: dict = {
             "description": "Number of triggers accepted during the run",
         },
         {
-            # wrpcAuxDiagStatus -- ASN_OCTET_STR encoding a uint32 bitmask.
-            # Declared ByteString so _cast_to_ua leaves the raw bytes intact;
-            # write_variables intercepts this, byte-shifts to uint32, and
-            # publishes the derived decimal string to the Status OPC UA node.
+            # wrpcAuxDiagStatus — ASN_OCTET_STR encoding a uint32 bitmask.
+            # Declared ByteString so _cast_to_ua leaves raw bytes intact.
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
             "opcua_name":  "_RawStatus",
             "opcua_type":  "ByteString",
@@ -190,10 +212,12 @@ _UCTS_CONFIG: dict = {
             "description": "Port link status",
         },
         {
+            # Raw integer from device: tenths of °C (e.g. 243 → 24.3 °C).
+            # Kept local; write_variables derives the Float Temperature from it.
             "oid":         "1.3.6.1.4.1.96.101.1.3.1.3.1",
-            "opcua_name":  "Temperature",
-            "opcua_type":  "Float",
-            "description": "Temperature of the TiCkS PCB (degrees C)",
+            "opcua_name":  "_IntegerTemperature",
+            "opcua_type":  "Int32",
+            "description": "(internal) temperature in tenths of °C",
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
@@ -227,10 +251,42 @@ _UCTS_CONFIG: dict = {
             "description": "Version of the UCTS controller",
             "value":       "2.0.0",
         },
+        # Derived variables — computed in write_variables() from local OIDs.
+        # value=None → base class creates OPC UA node with BadWaitingForInitialData.
+        # Their lifetime settings govern how long they remain UncertainLastUsableValue
+        # when their source OIDs are unavailable (0 = never expire).
+        {
+            "opcua_name":  "Status",
+            "opcua_type":  "String",
+            "description": "Status of TiCkS board (raw uint32 as decimal string)",
+            "value":       None,
+        },
+        {
+            "opcua_name":  "DstMacAddr",
+            "opcua_type":  "String",
+            "description": "Destination MAC address (aa:bb:cc:dd:ee:ff)",
+            "value":       None,
+        },
+        {
+            "opcua_name":  "State",
+            "opcua_type":  "Int32",
+            "description": "TiCkS state: 1=Running, 0=Online, 2=Unknown",
+            "value":       None,
+        },
+        {
+            "opcua_name":  "FirmwareVersion",
+            "opcua_type":  "String",
+            "description": "TiCkS firmware version (from Status bits 23:16)",
+            "value":       None,
+        },
+        {
+            "opcua_name":  "Temperature",
+            "opcua_type":  "Float",
+            "description": "Temperature of the TiCkS PCB (degrees C)",
+            "value":       None,
+        },
     ],
 }
-
-_INTERNAL_NAMES = frozenset({"DstMacAddr_32MSB", "DstMacAddr_16LSB", "_RawStatus"})
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SNMP value transformations  (ported from snmp_ucts.cpp)
@@ -260,7 +316,7 @@ def _merge_mac(msb: bytes, lsb: bytes) -> str:
 
 
 def _state_from_status(status: int) -> int:
-    """bit 7: 1=Running, 0=Online/Standby; 0 input -> 2=Unknown."""
+    """bit 7: 1=Running, 0=Online/Standby; 0 input → 2=Unknown."""
     return 2 if status == 0 else int((status >> 7) & 0x1)
 
 
@@ -269,11 +325,24 @@ def _fw_version_from_status(status: int) -> str:
     return "" if status == 0 else str((status >> 16) & 0xFF)
 
 
-def _dv(value: Any, opcua_type: str) -> ua.DataValue:
+def _good_dv(value: Any, opcua_type: str) -> ua.DataValue:
     """Shorthand: build a Good ua.DataValue from a Python value."""
     variant = _cast_to_ua(value, opcua_type)
     return ua.DataValue(variant) if isinstance(variant, ua.Variant) else variant
 
+
+def _entry_is_good(entry: Optional[StoreEntry]) -> bool:
+    """
+    Return True if *entry* exists and carries Good OPC UA status (StatusCode == 0).
+
+    Used to gate derived-value computation: a derived variable is only
+    recalculated when all the source entries it depends on were refreshed with
+    Good status in the current polling iteration.
+    """
+    if entry is None:
+        return False
+    sc = entry.data_value.StatusCode
+    return sc is not None and sc.value == 0
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -288,213 +357,162 @@ class UCTSPoller(SNMPPoller):
     Responsibilities
     ----------------
     - Poll all UCTS SNMP OIDs on the configured interval.
-    - Suppress internal MAC half-OIDs from OPC UA; merge them into DstMacAddr.
-    - Derive State and FirmwareVersion from the Status bitmask.
-    - Apply the remaining per-OID transformations (Temperature, PortLinkStatus,
-      TimeTAIString) before writing to OPC UA.
+    - Compute derived store entries from local OIDs each cycle:
+        · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
+        · _RawStatus  →  Status (String), State (Int32), FirmwareVersion (String)
+        · _IntegerTemperature  →  Temperature (Float, ÷ 10)
+    - Apply in-place transformations to published OIDs:
+        · PortLinkStatus: INTEGER enum  →  "na" / "down" / "up"
+        · TimeTAIString: reformat to ISO 8601 T separator
+    - When a source OID is not Good this cycle, delegate to
+      self._apply_staleness() on the derived entry so staleness and lifetime
+      expiry are handled consistently for both polled and derived variables.
 
     No knowledge of UDP commands or OPC UA Methods.
     """
 
-    # ── hook 1: build_variable_specs ─────────────────────────────────────────
+    # ── write_variables ───────────────────────────────────────────────────────
 
-    def build_variable_specs(self) -> Dict[str, NodeSpec]:
+    async def write_variables(self) -> None:
         """
-        Remove the two internal MAC half-OIDs from the published spec, override
-        the Status node type from ByteString to String (the SNMP OID is declared
-        ByteString so raw bytes arrive in write_variables, but what we publish to
-        OPC UA is the derived decimal string), and add the three derived variables:
-        DstMacAddr, State, FirmwareVersion.
+        Compute derived store entries then delegate to super() for OPC UA writes.
+
+        For each derived variable: if all source OID entries are Good this cycle,
+        compute the new value and update the entry's timestamp to now.  If any
+        source is not Good, call self._apply_staleness(name, entry, now) on the
+        derived entry — the base class single-entry method — so that its status
+        degrades (Uncertain → BadNoCommunication) according to its own lifetime
+        setting, consistently with how polled OIDs are handled.
+
+        In-place transformations (PortLinkStatus enum mapping, TimeTAIString
+        reformatting) update an already-Good entry's data_value without touching
+        its timestamp, since the underlying OID was refreshed this cycle by the
+        base-class poll loop.
+
+        super().write_variables() then iterates self._store and writes every
+        non-local entry to its OPC UA node.
         """
-        specs = super().build_variable_specs()
+        now = time.monotonic()
 
-        for name in _INTERNAL_NAMES:
-            specs.pop(name, None)
+        # ── MAC address: merge two OctetString halves ─────────────────────────
+        msb_entry = self._store.get("_DstMacAddr_32MSB")
+        lsb_entry = self._store.get("_DstMacAddr_16LSB")
+        mac_entry  = self._store.get("DstMacAddr")
 
-        _bad = ua.StatusCode(ua.StatusCodes.BadWaitingForInitialData)
+        if mac_entry is not None:
+            if _entry_is_good(msb_entry) and _entry_is_good(lsb_entry):
+                msb_raw = msb_entry.data_value.Value.Value
+                lsb_raw = lsb_entry.data_value.Value.Value
+                if isinstance(msb_raw, (bytes, bytearray)) and \
+                   isinstance(lsb_raw, (bytes, bytearray)):
+                    try:
+                        mac_entry.data_value = _good_dv(
+                            _merge_mac(bytes(msb_raw), bytes(lsb_raw)), "String"
+                        )
+                        mac_entry.timestamp = now
+                    except Exception as exc:
+                        log.warning("MAC merge error: %s", exc)
+                        self._apply_staleness("DstMacAddr", mac_entry, now)
+                else:
+                    log.warning("_DstMacAddr halves not bytes: msb=%r lsb=%r",
+                                msb_raw, lsb_raw)
+                    self._apply_staleness("DstMacAddr", mac_entry, now)
+            else:
+                self._apply_staleness("DstMacAddr", mac_entry, now)
 
-        # Status is derived from the internal _RawStatus bytes -- add it here
-        # just like DstMacAddr/State/FirmwareVersion.
-        specs["Status"] = NodeSpec(
-            opcua_type="String",
-            initial_value="",
-            description="Status of TiCkS board (raw uint32 as decimal string)",
-            initial_status=_bad,
-        )
+        # ── Status word: ByteString → uint32 → Status / State / FirmwareVersion
+        raw_entry    = self._store.get("_RawStatus")
+        status_entry = self._store.get("Status")
+        state_entry  = self._store.get("State")
+        fw_entry     = self._store.get("FirmwareVersion")
 
-        # initial_value must be a valid typed zero so asyncua registers the
-        # VariantType on the node.  The bad status is then written on top;
-        # clients see BadWaitingForInitialData but the type is correctly set.
-        specs["DstMacAddr"] = NodeSpec(
-            opcua_type="String",
-            initial_value="00:00:00:00:00:00",
-            description="Destination MAC address (aa:bb:cc:dd:ee:ff)",
-            initial_status=_bad,
-        )
-        specs["State"] = NodeSpec(
-            opcua_type="Int32",
-            initial_value=2,            # 2 = Unknown
-            description="TiCkS state: 1=Running, 0=Online, 2=Unknown",
-            initial_status=_bad,
-        )
-        specs["FirmwareVersion"] = NodeSpec(
-            opcua_type="String",
-            initial_value="",
-            description="TiCkS firmware version (from Status bits 23:16)",
-            initial_status=_bad,
-        )
-        return specs
-
-    # ── hook 0: SNMP transport -- tighter timeout to avoid poll overruns ────────
-
-    @staticmethod
-    def _resolve_ip(hostname: str) -> str:
-        """
-        Resolve a hostname to a numeric IPv4 address string.
-
-        UdpTransportTarget internally forces AF_INET, but on macOS the OS
-        may still route "localhost" ambiguously depending on /etc/hosts and
-        the active network configuration.  Pre-resolving to a dotted-decimal
-        address sidesteps any platform-specific hostname resolution quirks
-        and guarantees pysnmp uses the correct IPv4 path.
-        """
-        import socket as _socket
-        try:
-            results = _socket.getaddrinfo(
-                hostname, None,
-                family=_socket.AF_INET,
-                type=_socket.SOCK_DGRAM,
-            )
-            if results:
-                return results[0][4][0]
-        except _socket.gaierror:
-            pass
-        return hostname   # already numeric or unresolvable -- pass through
-
-    async def _get_all_oids(self) -> Optional[Dict[str, Any]]:
-        """
-        Override to use timeout=1s / retries=0 (vs base class timeout=2s /
-        retries=1) and to pre-resolve the hostname to a numeric IPv4 address
-        before passing it to UdpTransportTarget.  This avoids a macOS-specific
-        issue where "localhost" can be routed unexpectedly by the OS resolver
-        despite pysnmp explicitly requesting AF_INET.
-        """
-        from pysnmp.hlapi.v3arch.asyncio import (
-            CommunityData, ContextData, ObjectIdentity, ObjectType, get_cmd,
-            UdpTransportTarget,
-        )
-        from pysnmp.proto.rfc1905 import EndOfMibView, NoSuchInstance, NoSuchObject
-
-        object_types = [
-            ObjectType(ObjectIdentity(oid_cfg.oid)) for oid_cfg in self.oids
-        ]
-        if self._transport_target is None:
-            ip = self._resolve_ip(self.ip)
-            if ip != self.ip:
-                log.debug("Resolved %s -> %s for SNMP transport", self.ip, ip)
-            self._transport_target = await UdpTransportTarget.create(
-                (ip, self.port), timeout=1, retries=0,
-            )
-        error_indication, error_status, error_index, var_binds = await get_cmd(
-            self._snmp_engine,
-            CommunityData(self.community, mpModel=1),
-            self._transport_target,
-            ContextData(),
-            *object_types,
-        )
-        if error_indication:
-            log.warning("SNMP GET %s: %s", self.ip, error_indication)
-            return None
-        if error_status:
-            bad_idx = int(error_index) - 1 if error_index else None
-            bad_oid = str(var_binds[bad_idx][0]) if bad_idx is not None else "unknown"
-            log.warning("SNMP GET %s: agent error at OID %s -- skipping",
-                        self.ip, bad_oid)
-            if bad_idx is not None:
-                var_binds = list(var_binds)
-                var_binds.pop(bad_idx)
-        results: Dict[str, Any] = {}
-        for oid_obj, value in var_binds:
-            if isinstance(value, (NoSuchObject, NoSuchInstance, EndOfMibView)):
-                continue
-            results[str(oid_obj)] = value
-        return results
-
-
-    # ── hook 2: write_variables ───────────────────────────────────────────────
-
-    async def write_variables(self, values: Dict[str, ua.DataValue]) -> None:
-        """
-        Transform raw SNMP DataValues before writing to OPC UA, then delegate
-        to super() for the actual node writes.
-        """
-        # ── MAC: merge two OctetString halves ─────────────────────────────────
-        msb_dv = values.pop("DstMacAddr_32MSB", None)
-        lsb_dv = values.pop("DstMacAddr_16LSB", None)
-
-        if msb_dv is not None and lsb_dv is not None:
-            msb_raw = msb_dv.Value.Value if msb_dv.Value else None
-            lsb_raw = lsb_dv.Value.Value if lsb_dv.Value else None
-            if isinstance(msb_raw, (bytes, bytearray)) and \
-               isinstance(lsb_raw, (bytes, bytearray)):
-                try:
-                    values["DstMacAddr"] = _dv(
-                        _merge_mac(bytes(msb_raw), bytes(lsb_raw)), "String"
-                    )
-                except Exception as exc:
-                    log.warning("MAC merge error: %s", exc)
-            # else: source OIDs had no value -- leave DstMacAddr unchanged
-        # elif: only one half arrived -- leave DstMacAddr unchanged
-
-        # ── Status: ByteString -> uint32 byte-shift -> decimal string + derived vars
-        status_dv = values.pop("_RawStatus", None)
-        if status_dv is not None and status_dv.Value is not None:
-            raw = status_dv.Value.Value
+        if _entry_is_good(raw_entry):
+            raw = raw_entry.data_value.Value.Value
             if isinstance(raw, (bytes, bytearray)):
                 try:
                     status_int = _octetstr_to_uint32(bytes(raw))
-                    values["Status"]          = _dv(str(status_int),                     "String")
-                    values["State"]           = _dv(_state_from_status(status_int),      "Int32")
-                    values["FirmwareVersion"] = _dv(_fw_version_from_status(status_int), "String")
+                    for entry, name, val in (
+                        (status_entry, "Status",          str(status_int)),
+                        (state_entry,  "State",           _state_from_status(status_int)),
+                        (fw_entry,     "FirmwareVersion", _fw_version_from_status(status_int)),
+                    ):
+                        if entry is not None:
+                            entry.data_value = _good_dv(val, entry.opcua_type)
+                            entry.timestamp  = now
                 except Exception as exc:
                     log.warning("Status decode error: %s", exc)
+                    for entry, name in (
+                        (status_entry, "Status"),
+                        (state_entry,  "State"),
+                        (fw_entry,     "FirmwareVersion"),
+                    ):
+                        if entry is not None:
+                            self._apply_staleness(name, entry, now)
             else:
-                log.warning("_RawStatus value not decodable: %r -- leaving Status/State/FirmwareVersion unchanged", raw)
-        # ── Temperature: tenths-of-C integer -> float ─────────────────────────
-        temp_dv = values.get("Temperature")
-        if temp_dv is not None and temp_dv.Value is not None:
-            try:
-                values["Temperature"] = _dv(int(temp_dv.Value.Value) / 10.0, "Float")
-            except (ValueError, TypeError):
-                pass
+                log.warning("_RawStatus value not bytes: %r", raw)
+                for entry, name in (
+                    (status_entry, "Status"),
+                    (state_entry,  "State"),
+                    (fw_entry,     "FirmwareVersion"),
+                ):
+                    if entry is not None:
+                        self._apply_staleness(name, entry, now)
+        else:
+            for entry, name in (
+                (status_entry, "Status"),
+                (state_entry,  "State"),
+                (fw_entry,     "FirmwareVersion"),
+            ):
+                if entry is not None:
+                    self._apply_staleness(name, entry, now)
 
-        # ── PortLinkStatus: INTEGER enum -> "na" / "down" / "up" ─────────────
-        pls_dv = values.get("PortLinkStatus")
-        if pls_dv is not None and pls_dv.Value is not None:
+        # ── Temperature: _IntegerTemperature (Int32, tenths-°C) → Float °C ────
+        # Separating the raw integer OID from the published float avoids any
+        # type ambiguity: the OPC UA Temperature node is always a Float.
+        int_temp_entry = self._store.get("_IntegerTemperature")
+        temp_entry     = self._store.get("Temperature")
+
+        if temp_entry is not None:
+            if _entry_is_good(int_temp_entry):
+                try:
+                    celsius = int(int_temp_entry.data_value.Value.Value) / 10.0
+                    temp_entry.data_value = _good_dv(celsius, "Float")
+                    temp_entry.timestamp  = now
+                except (ValueError, TypeError) as exc:
+                    log.warning("Temperature conversion error: %s", exc)
+                    self._apply_staleness("Temperature", temp_entry, now)
+            else:
+                self._apply_staleness("Temperature", temp_entry, now)
+
+        # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
+        # In-place transformation on an already-Good entry; timestamp is left
+        # unchanged since the underlying OID was refreshed this cycle.
+        pls_entry = self._store.get("PortLinkStatus")
+        if _entry_is_good(pls_entry):
             try:
-                values["PortLinkStatus"] = _dv(
-                    {0: "na", 2: "up"}.get(int(pls_dv.Value.Value), "down"),
-                    "String",
+                mapped = {0: "na", 2: "up"}.get(
+                    int(pls_entry.data_value.Value.Value), "down"
                 )
-            except (ValueError, TypeError):
-                pass
+                pls_entry.data_value = _good_dv(mapped, "String")
+            except (ValueError, TypeError) as exc:
+                log.warning("PortLinkStatus conversion error: %s", exc)
 
-        # ── TimeTAIString: "2024-12-10-13:22:50" -> "2024-12-10T13:22:50" ────
-        # Only reformat if the string doesn't already contain a T separator
-        # (the emulator already produces ISO 8601 format directly).
-        tai_dv = values.get("TimeTAIString")
-        if tai_dv is not None and tai_dv.Value is not None:
+        # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
+        # In-place transformation; only reformat if T separator is absent
+        # (the hardware emulator already produces ISO 8601 directly).
+        tai_entry = self._store.get("TimeTAIString")
+        if _entry_is_good(tai_entry):
             try:
-                s = str(tai_dv.Value.Value)
+                s = str(tai_entry.data_value.Value.Value)
                 if "T" not in s:
                     pos = s.rfind("-")
                     if pos != -1:
                         s = s[:pos] + "T" + s[pos + 1:]
-                values["TimeTAIString"] = _dv(s, "String")
-            except Exception:
-                pass
+                tai_entry.data_value = _good_dv(s, "String")
+            except Exception as exc:
+                log.warning("TimeTAIString reformat error: %s", exc)
 
-        await super().write_variables(values)
+        await super().write_variables()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -513,7 +531,7 @@ class UCTSCommander:
 
     Attributes
     ----------
-    ucts_ip      Current IP of the TiCkS board (updated by Configure at runtime).
+    ucts_ip       Current IP of the TiCkS board (updated by Configure at runtime).
     ucts_cmd_port UDP command port of TiCkS (default 55010).
     """
     ucts_ip:      str
@@ -523,8 +541,8 @@ class UCTSCommander:
 
     def _send_blocking(self, cmd_hex: str) -> bool:
         """
-        Blocking UDP send + echo-back acknowledge.  Always called via
-        _send() which runs it in an executor to avoid blocking the event loop.
+        Blocking UDP send + echo-back acknowledge.  Always called via _send()
+        which runs it in an executor to avoid blocking the event loop.
         """
         try:
             cmd_bytes = bytes.fromhex(cmd_hex)
@@ -554,11 +572,7 @@ class UCTSCommander:
             sock.close()
 
     async def _send(self, cmd_hex: str) -> bool:
-        """
-        Async wrapper around _send_blocking().
-        Runs the blocking socket I/O in the default thread-pool executor so
-        the asyncio event loop is never stalled during the UDP timeout window.
-        """
+        """Async wrapper: runs _send_blocking() in the thread-pool executor."""
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._send_blocking, cmd_hex)
 
@@ -653,16 +667,13 @@ class UCTSCommander:
 
         Parameters
         ----------
-        parent_node
-            The asyncua Object node that will own the methods (the UCTS root).
-        ns
-            OPC UA namespace index.
-        poller
-            Optional UCTSPoller reference.  When Start() is called and succeeds,
-            an immediate poll is triggered so monitoring variables update without
-            waiting for the next poll interval.
+        parent_node  asyncua Object node that will own the methods (UCTS root).
+        ns           OPC UA namespace index.
+        poller       Optional UCTSPoller reference; when Start() succeeds an
+                     immediate poll is triggered so variables update without
+                     waiting for the next poll interval.
         """
-        commander = self   # closure reference; self.ucts_ip may change via Configure
+        commander = self   # closure; self.ucts_ip may change via Configure
 
         @uamethod
         async def Configure(parent,
@@ -672,21 +683,18 @@ class UCTSCommander:
             log.info("Configure: pc=%s ucts=%s mac=%s",
                      PC_IP_ADDRESS, UCTS_IP_ADDRESS, PC_MAC_ADDRESS)
             commander.ucts_ip = UCTS_IP_ADDRESS.strip()
-            # Invalidate the poller's cached transport so it reconnects
             if poller is not None:
                 poller.ip = commander.ucts_ip
                 poller._transport_target = None
-            return int(
-                await commander.set_mac(PC_MAC_ADDRESS.strip())
-            )
+            return int(await commander.set_mac(PC_MAC_ADDRESS.strip()))
 
         @uamethod
         async def Start(parent) -> int:
             log.info("Start -> %s:%d", commander.ucts_ip, commander.ucts_cmd_port)
             rc = await commander.get_ready()
             if rc == 0 and poller is not None:
-                await asyncio.sleep(1.0)   # let TiCkS transition state
-                await poller._poll_once()  # refresh monitoring immediately
+                await asyncio.sleep(1.0)
+                await poller._poll_once()
             return int(rc)
 
         @uamethod
@@ -695,16 +703,12 @@ class UCTSCommander:
             return int(await commander.reset())
 
         @uamethod
-        async def ScheduleTrigger(parent,
-                                  timestamp_UTC_ISO: str) -> int:
+        async def ScheduleTrigger(parent, timestamp_UTC_ISO: str) -> int:
             log.info("ScheduleTrigger: %s", timestamp_UTC_ISO)
-            return int(
-                await commander.schedule_trigger(timestamp_UTC_ISO.strip())
-            )
+            return int(await commander.schedule_trigger(timestamp_UTC_ISO.strip()))
 
         @uamethod
-        async def XMLConfiguration(parent,
-                                   XML_Message: str) -> int:
+        async def XMLConfiguration(parent, XML_Message: str) -> int:
             log.info("XMLConfiguration (len=%d)", len(XML_Message))
             idx = XML_Message.find("<")
             xml_body = XML_Message[idx:] if idx >= 0 else XML_Message
@@ -715,8 +719,7 @@ class UCTSCommander:
             return int(rc)
 
         @uamethod
-        async def SetDstIpAddress(parent,
-                                  ip_address: str) -> int:
+        async def SetDstIpAddress(parent, ip_address: str) -> int:
             log.info("SetDstIpAddress: %s", ip_address)
             return int(await commander.set_dst_ip(ip_address.strip()))
 
@@ -726,11 +729,10 @@ class UCTSCommander:
             return int(await commander.set_dst_port(int(port)))
 
         def _arg(name: str, type_node_id: ua.NodeId) -> ua.Argument:
-            """Build a scalar OPC UA Argument with a LocalizedText description."""
             a = ua.Argument()
             a.Name = name
             a.DataType = type_node_id
-            a.ValueRank = -1          # -1 = Scalar (not an array)
+            a.ValueRank = -1
             a.ArrayDimensions = []
             a.Description = ua.LocalizedText("")
             return a
@@ -770,15 +772,6 @@ class UCTSOPCUAServer(OPCUAServer):
     """
     OPCUAServer subclass that, after building the standard monitoring address
     space, resolves the UCTS root node and attaches the UCTSCommander methods.
-
-    Parameters
-    ----------
-    commander
-        A UCTSCommander instance whose methods will be registered on the root.
-    poller
-        The UCTSPoller instance (passed to register_methods so Start() can
-        trigger an immediate poll).
-    All other parameters are forwarded to OPCUAServer.
     """
 
     def __init__(
@@ -796,17 +789,9 @@ class UCTSOPCUAServer(OPCUAServer):
         """
         Build the standard monitoring subtree via super(), then resolve the
         already-created UCTS root node and register the command methods on it.
-
-        super() calls _ensure_path(server, ns_idx, ["UCTS", "Monitoring"]),
-        which creates Objects/UCTS and Objects/UCTS/Monitoring in sequence and
-        returns the Monitoring node.  Objects/UCTS therefore already exists by
-        the time we need it for the methods.
         """
         await super()._build_address_space(server, ns_idx)
-
-        # _ensure_path walked UCTS -> Monitoring; re-walk just UCTS to get the root.
         ucts_node = await self._ensure_path(server, ns_idx, self.root_parts)
-
         await self._commander.register_methods(ucts_node, ns_idx, self._poller)
 
 
