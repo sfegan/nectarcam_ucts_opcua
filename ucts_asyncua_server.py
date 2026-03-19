@@ -591,7 +591,8 @@ class UCTSCommander:
 
     async def set_dst_port(self, dst_port: int) -> int:
         """Function code 0x6 -- set destination UDP port."""
-        return 0 if await self._send("F" * 11 + f"{dst_port:02X}" + "6") else 1
+        word = (0xFFFFFFFFFFF << 20) | ((dst_port & 0xFFFF) << 4) | 0x6
+        return 0 if await self._send(f"{word:016X}") else 1
 
     async def schedule_trigger(self, utc_iso: str) -> int:
         """
