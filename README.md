@@ -60,7 +60,7 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `State` | Int32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Reset/Standby (TDC and counters stopped), `1` = Running (TDC and counters active), `2` = Unknown |
 | `Status` | String | Raw uint32 SNMP status word as decimal string. Bit layout (LSB first): bit 0 = throttle enabled, bit 1 = WR time valid, bit 2 = SPI enabled, bit 7 = counters/TDC enabled (`rst_cnt_ack`), bits 16–23 = firmware version, bits 24–31 = data format version |
 | `Temperature` | Float | PCB temperature (°C) from the WR node temperature sensor |
-| `Throttle` | Int32 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
+| `Throttle` | Int64 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
 | `TimeTAI` | Int64 | Current board time in TAI seconds (from White Rabbit) |
 | `TimeTAIString` | String | Current TAI time as ISO 8601 string |
 | `UpTime` | String | Board uptime as formatted string (e.g. `5:23:49.160000`) |
@@ -68,13 +68,13 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `WrpcSwVersion` | String | White Rabbit PTP core software version |
 | `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
 | `snmp_host` | String | IP address of the SNMP device |
-| `snmp_port` | Int32 | SNMP UDP port |
-| `snmp_polling_timestamp` | Int64 | Unix timestamp of the most recent poll |
+| `snmp_port` | UInt16 | SNMP UDP port |
+| `snmp_polling_timestamp` | DateTime | Timestamp of the most recent poll |
 | `snmp_polling_age` | Double | Age of the most recent poll (seconds) |
 | `snmp_polling_interval` | Double | Current polling interval (seconds) |
-| `snmp_polling_success_count` | Int64 | Cumulative successful SNMP polls |
+| `snmp_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
 | `snmp_server_online` | Boolean | `True` when the SNMP agent is reachable |
-| `cls_state` | Int32 | Bridge connection state: `0` = offline, `1` = online |
+| `cls_state` | Byte | Bridge connection state: `0` = offline, `1` = online |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 
