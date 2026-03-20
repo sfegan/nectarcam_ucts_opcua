@@ -51,6 +51,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import socket
 import struct
 import sys
 import time
@@ -305,6 +306,16 @@ class UCTSState:
         self.wrpc_sw_version: str = "wrpc-v4.2-dirty"
         self.time_tai: int = int(time.time()) + 37
 
+        # ── Standard MIB-II system group (1.3.6.1.2.1.1.*) ───────────────────
+        self.sys_descr:    str = "UCTS-TiCkS Board Emulator v1.0"
+        self.sys_contact:  str = "UCTS Emulator"
+        self.sys_name:     str = socket.gethostname()
+        self.sys_location: str = "Emulated"
+
+        # ── SNMP statistics counters (1.3.6.1.2.1.11.*) ──────────────────────
+        self.snmp_in_pkts:  int = 0
+        self.snmp_out_pkts: int = 0
+
     # ── derived ───────────────────────────────────────────────────────────────
 
     @property
@@ -336,9 +347,23 @@ class UCTSState:
 
     # ── OID value map ─────────────────────────────────────────────────────────
 
+    @property
+    def sys_uptime_centiseconds(self) -> int:
+        """sysUpTime: time since the agent was started, in hundredths of a second."""
+        return int((time.time() - _START_TIME) * 100)
+
+    @property
+    def if_oper_status(self) -> int:
+        """
+        RFC 2863 ifOperStatus: 1=up, 2=down, 3=testing.
+        Maps from port_link_status (0=n/a→2, 1=down→2, 2=up→1).
+        """
+        return 1 if self.port_link_status == 2 else 2
+
     def oid_value_tlv(self, oid: Tuple[int, ...]) -> Optional[bytes]:
         """Return the pre-encoded TLV value bytes for a given OID, or None."""
         m = {
+            # ── UCTS-specific OIDs ────────────────────────────────────────────
             (1,3,6,1,4,1,96,101,2,1,1,1,1,8,1):  _ber_int(self.busy_count),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,3,1):  _ber_ipaddr(self.dst_ip),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,4,1):  _ber_octetstr(self.dst_mac_h),
@@ -353,6 +378,28 @@ class UCTSState:
             (1,3,6,1,4,1,96,101,1,2,2,0):         _ber_octetstr(self.tai_string.encode()),
             (1,3,6,1,4,1,96,101,1,2,3,0):         _ber_octetstr(self.uptime_str.encode()),
             (1,3,6,1,4,1,96,101,1,1,2,0):         _ber_octetstr(self.wrpc_sw_version.encode()),
+
+            # ── MIB-II System group (RFC 3418 / 1.3.6.1.2.1.1.*) ─────────────
+            (1,3,6,1,2,1,1,1,0): _ber_octetstr(self.sys_descr.encode()),
+            (1,3,6,1,2,1,1,2,0): _ber_oid((1,3,6,1,4,1,96,101)),   # sysObjectID
+            (1,3,6,1,2,1,1,3,0): _ber_uint_app(_T_TIMETICKS, self.sys_uptime_centiseconds, 4),
+            (1,3,6,1,2,1,1,4,0): _ber_octetstr(self.sys_contact.encode()),
+            (1,3,6,1,2,1,1,5,0): _ber_octetstr(self.sys_name.encode()),
+            (1,3,6,1,2,1,1,6,0): _ber_octetstr(self.sys_location.encode()),
+            (1,3,6,1,2,1,1,7,0): _ber_int(72),                      # sysServices: application + end-to-end
+
+            # ── MIB-II Interfaces group (RFC 2863 / 1.3.6.1.2.1.2.*) ─────────
+            (1,3,6,1,2,1,2,1,0):     _ber_int(1),                   # ifNumber
+            (1,3,6,1,2,1,2,2,1,1,1): _ber_int(1),                   # ifIndex.1
+            (1,3,6,1,2,1,2,2,1,2,1): _ber_octetstr(b"WR Port 0"),   # ifDescr.1
+            (1,3,6,1,2,1,2,2,1,3,1): _ber_int(6),                   # ifType.1 = ethernetCsmacd
+            (1,3,6,1,2,1,2,2,1,7,1): _ber_int(1),                   # ifAdminStatus.1 = up
+            (1,3,6,1,2,1,2,2,1,8,1): _ber_int(self.if_oper_status), # ifOperStatus.1
+
+            # ── MIB-II SNMP group (RFC 3418 / 1.3.6.1.2.1.11.*) ─────────────
+            (1,3,6,1,2,1,11,1,0):  _ber_uint_app(_T_COUNTER32, self.snmp_in_pkts,  4),
+            (1,3,6,1,2,1,11,2,0):  _ber_uint_app(_T_COUNTER32, self.snmp_out_pkts, 4),
+            (1,3,6,1,2,1,11,30,0): _ber_int(2),                     # snmpEnableAuthenTraps = disabled
         }
         return m.get(oid)
 
@@ -410,6 +457,15 @@ class UCTSState:
             f"  TimeTAIString   : {self.tai_string}",
             f"  UpTime          : {self.uptime_str}",
             f"  WrpcSwVersion   : {self.wrpc_sw_version}",
+            f"  --- Standard MIB-II ---",
+            f"  sysDescr        : {self.sys_descr}",
+            f"  sysContact      : {self.sys_contact}",
+            f"  sysName         : {self.sys_name}",
+            f"  sysLocation     : {self.sys_location}",
+            f"  sysUpTime       : {self.sys_uptime_centiseconds} cs  ({self.uptime_str})",
+            f"  ifOperStatus    : {self.if_oper_status}  (1=up, 2=down)",
+            f"  snmpInPkts      : {self.snmp_in_pkts}",
+            f"  snmpOutPkts     : {self.snmp_out_pkts}",
         ])
 
 
@@ -437,6 +493,8 @@ class SNMPAgentProtocol(asyncio.DatagramProtocol):
         version, community, request_id, oids = parsed
         log.debug("SNMP GET from %s  req_id=%d  oids=%d", addr, request_id, len(oids))
 
+        state.snmp_in_pkts += 1
+
         var_binds: List[Tuple[Tuple[int, ...], bytes]] = []
         for oid in oids:
             tlv = state.oid_value_tlv(oid)
@@ -448,6 +506,7 @@ class SNMPAgentProtocol(asyncio.DatagramProtocol):
             var_binds.append((oid, tlv))
 
         response = _build_response(community, request_id, var_binds)
+        state.snmp_out_pkts += 1
         self._transport.sendto(response, addr)
 
     def error_received(self, exc: Exception) -> None:
@@ -534,6 +593,10 @@ Commands:
   set WrpcSwVersion <str>  WR software version string
   set FirmwareVersion <n>  Firmware version integer (bits 23:16 of status)
   set PortLinkStatus <n>   Port link status (0=na, 1=down, 2=up)
+  set SysDescr <str>       sysDescr (MIB-II 1.3.6.1.2.1.1.1.0)
+  set SysContact <str>     sysContact (MIB-II 1.3.6.1.2.1.1.4.0)
+  set SysName <str>        sysName (MIB-II 1.3.6.1.2.1.1.5.0)
+  set SysLocation <str>    sysLocation (MIB-II 1.3.6.1.2.1.1.6.0)
   state <0|1|2>            TiCkS state (0=Online, 1=Running, 2=Unknown)
   status <hex_or_dec>      Set raw status word (overrides state/fw/spi)
   reset                    Apply Reset (state=Online, counters=0)
@@ -623,6 +686,18 @@ def _apply_set(var: str, val: str) -> None:
         elif var == "PortLinkStatus":
             state.port_link_status = int(val)
             print(f"  -> PortLinkStatus={state.port_link_status}")
+        elif var == "SysDescr":
+            state.sys_descr = val
+            print(f"  -> SysDescr={state.sys_descr}")
+        elif var == "SysContact":
+            state.sys_contact = val
+            print(f"  -> SysContact={state.sys_contact}")
+        elif var == "SysName":
+            state.sys_name = val
+            print(f"  -> SysName={state.sys_name}")
+        elif var == "SysLocation":
+            state.sys_location = val
+            print(f"  -> SysLocation={state.sys_location}")
         else:
             print(f"Unknown variable: {var!r}")
     except ValueError as exc:
