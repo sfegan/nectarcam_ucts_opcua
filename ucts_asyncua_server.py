@@ -61,12 +61,14 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           UpTime
           WrpcSwVersion
           SoftwareVersion  <- constant
-          host             <- built-in: SNMP device IP
-          port             <- built-in: SNMP port
-          cls_state        <- built-in: 0=offline 1=online
-          polling_timestamp  <- built-in
-          polling_age        <- built-in
-          polling_interval   <- built-in
+          snmp_host                   <- built-in: SNMP device IP
+          snmp_port                   <- built-in: SNMP port
+          snmp_polling_timestamp      <- built-in
+          snmp_polling_age            <- built-in
+          snmp_polling_interval       <- built-in
+          snmp_polling_success_count  <- built-in: cumulative successful polls
+          snmp_server_online          <- built-in: True when SNMP agent reachable
+          cls_state                   <- built-in: 0=offline 1=online
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
       _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)
@@ -83,6 +85,10 @@ Usage
   --ucts-cmd-port N     UDP command port             (default: 55010)
   --snmp-community S    SNMP community string        (default: public)
   --poll-interval F     Poll interval in seconds     (default: 1.0)
+  --snmp-timeout F      SNMP request timeout in seconds (default: 2.0)
+  --snmp-retries N      SNMP retries after first attempt (default: 1)
+  --monitoring-path S   OPC UA path for monitoring node (default: Monitoring)
+  --variable-lifetime F Variable lifetime in seconds    (default: 120.0)
   --opcua-endpoint URL  OPC UA endpoint URL          (default: opc.tcp://0.0.0.0:4840/ucts/)
   --opcua-namespace URI OPC UA namespace URI
   --opcua-user U:P      Enable username/password auth
@@ -148,7 +154,7 @@ log = logging.getLogger("ucts_server")
 # ─────────────────────────────────────────────────────────────────────────────
 
 _UCTS_CONFIG: dict = {
-    "ip":            "10.10.3.99",   # overridden at runtime via --ucts-ip
+    "host":          "10.10.3.99",   # overridden at runtime via --ucts-ip
     "port":          161,
     "community":     "public",
     "description":   "UCTS SNMP Device",
@@ -684,7 +690,7 @@ class UCTSCommander:
                      PC_IP_ADDRESS, UCTS_IP_ADDRESS, PC_MAC_ADDRESS)
             commander.ucts_ip = UCTS_IP_ADDRESS.strip()
             if poller is not None:
-                poller.ip = commander.ucts_ip
+                poller.host = commander.ucts_ip
                 poller._transport_target = None
             return int(await commander.set_mac(PC_MAC_ADDRESS.strip()))
 
@@ -822,6 +828,16 @@ def _parse_args() -> argparse.Namespace:
                    help="OPC UA namespace URI")
     p.add_argument("--opcua-user", default=None, metavar="USER:PASS",
                    help="OPC UA username:password (disables anonymous access)")
+    p.add_argument("--snmp-timeout",  default=2.0, type=float, metavar="SECONDS",
+                   help="SNMP request timeout in seconds (per attempt)")
+    p.add_argument("--snmp-retries",  default=1,   type=int,   metavar="N",
+                   help="Number of SNMP retries after the first attempt")
+    p.add_argument("--monitoring-path", default="Monitoring",
+                   help="OPC UA path of the monitoring variables node "
+                        "(relative to the UCTS root node)")
+    p.add_argument("--variable-lifetime", default=120.0, type=float, metavar="SECONDS",
+                   help="Default lifetime in seconds for all polled variables "
+                        "before they expire to BadNoCommunication (0 = never expire)")
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     p.add_argument("--log-file", default=None,
@@ -841,10 +857,14 @@ async def _async_main() -> None:
         user, password = parts
 
     cfg = dict(_UCTS_CONFIG)
-    cfg["ip"]            = args.ucts_ip
-    cfg["port"]          = args.ucts_snmp_port
-    cfg["community"]     = args.snmp_community
-    cfg["poll_interval"] = args.poll_interval
+    cfg["host"]             = args.ucts_ip
+    cfg["port"]             = args.ucts_snmp_port
+    cfg["community"]        = args.snmp_community
+    cfg["poll_interval"]    = args.poll_interval
+    cfg["snmp_timeout"]     = args.snmp_timeout
+    cfg["snmp_retries"]     = args.snmp_retries
+    cfg["opcua_path"]       = args.monitoring_path
+    cfg["default_lifetime"] = args.variable_lifetime
 
     poller    = UCTSPoller.from_dict(cfg)
     commander = UCTSCommander(
