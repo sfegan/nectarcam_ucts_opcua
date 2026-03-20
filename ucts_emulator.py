@@ -5,6 +5,7 @@ Interactive emulator for the UCTS-TiCkS board.
 
 Runs three concurrent services:
   1. SNMP agent   -- serves all UCTS OIDs over SNMPv2c (default port 1161)
+                     Supports GET and GETNEXT (so snmpwalk works).
                      Uses a hand-rolled BER encoder/decoder -- no pysnmp
                      high-level API needed, works with any pysnmp version.
   2. UDP listener -- accepts TiCkS command packets (default port 55010),
@@ -24,13 +25,18 @@ Usage
 Interactive commands (at the ucts> prompt)
 ------------------------------------------
   show                       Print all current variable values
-  set Temperature <val>      Set temperature in tenths of °C (256 = 25.6°C)
+  set Temperature <val>      Set temperature in °C (e.g. 25.6)
   set EventCount <val>       Set event counter
   set BusyCount <val>        Set busy counter
   set Throttle <val>         Set throttle (decimal or 0x hex)
   set DstIpAddr <x.x.x.x>   Set destination IP
   set DstPort <val>          Set destination port
   set WrpcSwVersion <str>    Set WR software version string
+  set WrpcHwType <str>       Set WR hardware type string
+  set WrpcBuildBy <str>      Set WR build-by string
+  set WrpcBuildDate <str>    Set WR build date string
+  set SpllMode <n>           Set SPLL mode (0=na,1=grandmaster,2=master,3=slave)
+  set SpllSeqState <n>       Set SPLL sequencer state (8=ready)
   set FirmwareVersion <n>    Set firmware version integer
   set PortLinkStatus <n>     Set port link status (0=na, 1=down, 2=up)
   state <0|1|2>              Set TiCkS state (0=Online, 1=Running, 2=Unknown)
@@ -76,7 +82,9 @@ _T_GAUGE32    = 0x42   # APPLICATION 2
 _T_TIMETICKS  = 0x43   # APPLICATION 3
 _T_COUNTER64  = 0x46   # APPLICATION 6
 _T_NOSUCHINS  = 0x81   # [1] PRIMITIVE  (NoSuchInstance)
+_T_ENDOFMIB   = 0x82   # [2] PRIMITIVE  (EndOfMibView)
 _T_GET_REQ    = 0xA0   # [0] CONSTRUCTED
+_T_GETNEXT    = 0xA1   # [1] CONSTRUCTED
 _T_RESPONSE   = 0xA2   # [2] CONSTRUCTED
 
 
@@ -172,6 +180,10 @@ def _ber_nosuchinstance() -> bytes:
     return _ber_tlv(_T_NOSUCHINS, b"")
 
 
+def _ber_endofmibview() -> bytes:
+    return _ber_tlv(_T_ENDOFMIB, b"")
+
+
 def _ber_sequence(body: bytes) -> bytes:
     return _ber_tlv(_T_SEQUENCE, body)
 
@@ -215,12 +227,12 @@ def _decode_oid(data: bytes) -> Tuple[int, ...]:
     return tuple(oid)
 
 
-def _parse_get_request(
+def _parse_snmp_request(
     packet: bytes,
-) -> Optional[Tuple[int, str, int, List[Tuple[int, ...]]]]:
+) -> Optional[Tuple[int, str, int, int, List[Tuple[int, ...]]]]:
     """
-    Parse an SNMPv2c GET request packet.
-    Returns (version, community, request_id, [oid_tuple, ...]) or None on error.
+    Parse an SNMPv2c GET or GETNEXT request packet.
+    Returns (version, community, request_id, pdu_type, [oid_tuple, ...]) or None on error.
     """
     try:
         tag, body, _ = _decode_tlv(packet, 0)
@@ -232,8 +244,9 @@ def _parse_get_request(
         tag, comm_bytes, pos = _decode_tlv(body, pos)
         community = comm_bytes.decode("latin-1")
         tag, pdu_body, pos = _decode_tlv(body, pos)
-        if tag != _T_GET_REQ:
-            return None   # only handle GET; ignore GETNEXT, SET, etc.
+        if tag not in (_T_GET_REQ, _T_GETNEXT):
+            return None   # only handle GET and GETNEXT; ignore SET, etc.
+        pdu_type = tag
         pos2 = 0
         tag, req_id_bytes, pos2 = _decode_tlv(pdu_body, pos2)
         request_id = _decode_int(req_id_bytes)
@@ -248,7 +261,7 @@ def _parse_get_request(
             tag, oid_bytes, _ = _decode_tlv(vb_body, 0)
             if tag == _T_OID:
                 oids.append(_decode_oid(oid_bytes))
-        return version, community, request_id, oids
+        return version, community, request_id, pdu_type, oids
     except Exception as exc:
         log.debug("SNMP parse error: %s", exc)
         return None
@@ -301,9 +314,21 @@ class UCTSState:
         self.event_count:  int   = 0
         self.busy_count:   int   = 0
         self.throttle:     int   = 0xFFFF
-        self.temperature:  int   = 256    # tenths of °C → 25.6 °C
+        self.temperature:  float = 25.6   # degrees C, sent as DisplayString
         self.port_link_status: int = 2    # 2=up
         self.wrpc_sw_version: str = "wrpc-v4.2-dirty"
+        self.wrpc_hw_type:    str = "NA"
+        self.wrpc_build_by:   str = "UCTS Emulator"
+        self.wrpc_build_date: str = "Jan  1 2025 00:00:00"
+        self.temperature_name: str = "pcb"
+        self.spll_mode:       int = 3   # 3=slave
+        self.spll_irq_cnt:    int = 0
+        self.spll_seq_state:  int = 8   # 8=ready
+        self.sfp_pn:          bytes = b"BO15C3149620D   "  # 16 bytes
+        self.sfp_in_db:       int = 1   # 1=notInDataBase
+        self.port_internal_tx: int = 0
+        self.port_internal_rx: int = 0
+        self.aux_diag_ro_reg_nb: int = 8
         self.time_tai: int = int(time.time()) + 37
 
         # ── Standard MIB-II system group (1.3.6.1.2.1.1.*) ───────────────────
@@ -360,48 +385,94 @@ class UCTSState:
         """
         return 1 if self.port_link_status == 2 else 2
 
-    def oid_value_tlv(self, oid: Tuple[int, ...]) -> Optional[bytes]:
-        """Return the pre-encoded TLV value bytes for a given OID, or None."""
-        m = {
-            # ── UCTS-specific OIDs ────────────────────────────────────────────
-            (1,3,6,1,4,1,96,101,2,1,1,1,1,8,1):  _ber_int(self.busy_count),
+    def oid_table(self) -> Dict[Tuple[int, ...], bytes]:
+        """
+        Return the complete OID → encoded-TLV mapping for this state snapshot.
+        Called once per request so all values are consistent within a response.
+        """
+        return {
+            # ── WR-WRPC-MIB: Version group (wrpcCore.1.*) ─────────────────────
+            (1,3,6,1,4,1,96,101,1,1,1,0): _ber_octetstr(self.wrpc_hw_type.encode()),
+            (1,3,6,1,4,1,96,101,1,1,2,0): _ber_octetstr(self.wrpc_sw_version.encode()),
+            (1,3,6,1,4,1,96,101,1,1,3,0): _ber_octetstr(self.wrpc_build_by.encode()),
+            (1,3,6,1,4,1,96,101,1,1,4,0): _ber_octetstr(self.wrpc_build_date.encode()),
+
+            # ── WR-WRPC-MIB: Time group (wrpcCore.2.*) ────────────────────────
+            (1,3,6,1,4,1,96,101,1,2,1,0): _ber_counter64(self.time_tai),
+            (1,3,6,1,4,1,96,101,1,2,2,0): _ber_octetstr(self.tai_string.encode()),
+            (1,3,6,1,4,1,96,101,1,2,3,0): _ber_uint_app(_T_TIMETICKS, self.sys_uptime_centiseconds, 4),
+
+            # ── WR-WRPC-MIB: Temperature table (wrpcCore.3.1.1.*) ─────────────
+            # wrpcTemperatureIndex.1 is not-accessible; Name and Value are row .2 and .3
+            (1,3,6,1,4,1,96,101,1,3,1,2,1): _ber_octetstr(self.temperature_name.encode()),
+            (1,3,6,1,4,1,96,101,1,3,1,3,1): _ber_octetstr(
+                f"{self.temperature:.4f}".rstrip("0").rstrip(".").encode()
+            ),
+
+            # ── WR-WRPC-MIB: SPLL group (wrpcCore.4.*) ────────────────────────
+            (1,3,6,1,4,1,96,101,1,4,1,0): _ber_int(self.spll_mode),
+            (1,3,6,1,4,1,96,101,1,4,2,0): _ber_uint_app(_T_COUNTER32, self.spll_irq_cnt, 4),
+            (1,3,6,1,4,1,96,101,1,4,3,0): _ber_int(self.spll_seq_state),
+
+            # ── WR-WRPC-MIB: Port group (wrpcCore.7.*) ────────────────────────
+            (1,3,6,1,4,1,96,101,1,7,1,0): _ber_int(self.port_link_status),
+            (1,3,6,1,4,1,96,101,1,7,2,0): _ber_octetstr(self.sfp_pn),
+            (1,3,6,1,4,1,96,101,1,7,3,0): _ber_int(self.sfp_in_db),
+            (1,3,6,1,4,1,96,101,1,7,4,0): _ber_uint_app(_T_COUNTER32, self.port_internal_tx, 4),
+            (1,3,6,1,4,1,96,101,1,7,5,0): _ber_uint_app(_T_COUNTER32, self.port_internal_rx, 4),
+
+            # ── AUX-DIAG MIB: wrpcAuxDiag101RoTable (wrpcCore.2.1.1.1.*) ──────
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,2,1):  _ber_uint_app(_T_GAUGE32, self.aux_diag_ro_reg_nb, 4),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,3,1):  _ber_ipaddr(self.dst_ip),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,4,1):  _ber_octetstr(self.dst_mac_h),
-            (1,3,6,1,4,1,96,101,2,1,1,1,1,5,1):  _ber_octetstr(self.dst_mac_l),
-            (1,3,6,1,4,1,96,101,2,1,1,1,1,6,1):  _ber_uint_app(_T_GAUGE32,  self.dst_port,    4),
-            (1,3,6,1,4,1,96,101,2,1,1,1,1,7,1):  _ber_int(self.event_count),
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,5,1):  _ber_octetstr(self.dst_mac_l + b"\x00\x00"),
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,6,1):  _ber_uint_app(_T_GAUGE32, self.dst_port, 4),
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,7,1):  _ber_uint_app(_T_GAUGE32, self.event_count, 4),
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,8,1):  _ber_uint_app(_T_GAUGE32, self.busy_count, 4),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,9,1):  _ber_octetstr(self.status_bytes),
-            (1,3,6,1,4,1,96,101,2,1,1,1,1,10,1): _ber_uint_app(_T_GAUGE32,  self.throttle,    4),
-            (1,3,6,1,4,1,96,101,1,7,1,0):         _ber_int(self.port_link_status),
-            (1,3,6,1,4,1,96,101,1,3,1,3,1):       _ber_int(self.temperature),
-            (1,3,6,1,4,1,96,101,1,2,1,0):         _ber_counter64(self.time_tai),
-            (1,3,6,1,4,1,96,101,1,2,2,0):         _ber_octetstr(self.tai_string.encode()),
-            (1,3,6,1,4,1,96,101,1,2,3,0):         _ber_octetstr(self.uptime_str.encode()),
-            (1,3,6,1,4,1,96,101,1,1,2,0):         _ber_octetstr(self.wrpc_sw_version.encode()),
+            (1,3,6,1,4,1,96,101,2,1,1,1,1,10,1): _ber_uint_app(_T_GAUGE32, self.throttle, 4),
 
             # ── MIB-II System group (RFC 3418 / 1.3.6.1.2.1.1.*) ─────────────
             (1,3,6,1,2,1,1,1,0): _ber_octetstr(self.sys_descr.encode()),
-            (1,3,6,1,2,1,1,2,0): _ber_oid((1,3,6,1,4,1,96,101)),   # sysObjectID
+            (1,3,6,1,2,1,1,2,0): _ber_oid((1,3,6,1,4,1,96,101)),
             (1,3,6,1,2,1,1,3,0): _ber_uint_app(_T_TIMETICKS, self.sys_uptime_centiseconds, 4),
             (1,3,6,1,2,1,1,4,0): _ber_octetstr(self.sys_contact.encode()),
             (1,3,6,1,2,1,1,5,0): _ber_octetstr(self.sys_name.encode()),
             (1,3,6,1,2,1,1,6,0): _ber_octetstr(self.sys_location.encode()),
-            (1,3,6,1,2,1,1,7,0): _ber_int(72),                      # sysServices: application + end-to-end
+            (1,3,6,1,2,1,1,7,0): _ber_int(72),
 
             # ── MIB-II Interfaces group (RFC 2863 / 1.3.6.1.2.1.2.*) ─────────
-            (1,3,6,1,2,1,2,1,0):     _ber_int(1),                   # ifNumber
-            (1,3,6,1,2,1,2,2,1,1,1): _ber_int(1),                   # ifIndex.1
-            (1,3,6,1,2,1,2,2,1,2,1): _ber_octetstr(b"WR Port 0"),   # ifDescr.1
-            (1,3,6,1,2,1,2,2,1,3,1): _ber_int(6),                   # ifType.1 = ethernetCsmacd
-            (1,3,6,1,2,1,2,2,1,7,1): _ber_int(1),                   # ifAdminStatus.1 = up
-            (1,3,6,1,2,1,2,2,1,8,1): _ber_int(self.if_oper_status), # ifOperStatus.1
+            (1,3,6,1,2,1,2,1,0):     _ber_int(1),
+            (1,3,6,1,2,1,2,2,1,1,1): _ber_int(1),
+            (1,3,6,1,2,1,2,2,1,2,1): _ber_octetstr(b"WR Port 0"),
+            (1,3,6,1,2,1,2,2,1,3,1): _ber_int(6),
+            (1,3,6,1,2,1,2,2,1,7,1): _ber_int(1),
+            (1,3,6,1,2,1,2,2,1,8,1): _ber_int(self.if_oper_status),
 
             # ── MIB-II SNMP group (RFC 3418 / 1.3.6.1.2.1.11.*) ─────────────
             (1,3,6,1,2,1,11,1,0):  _ber_uint_app(_T_COUNTER32, self.snmp_in_pkts,  4),
             (1,3,6,1,2,1,11,2,0):  _ber_uint_app(_T_COUNTER32, self.snmp_out_pkts, 4),
-            (1,3,6,1,2,1,11,30,0): _ber_int(2),                     # snmpEnableAuthenTraps = disabled
+            (1,3,6,1,2,1,11,30,0): _ber_int(2),
         }
-        return m.get(oid)
+
+    def oid_value_tlv(self, oid: Tuple[int, ...]) -> Optional[bytes]:
+        """Return the pre-encoded TLV value bytes for a given OID, or None."""
+        return self.oid_table().get(oid)
+
+    def next_oid_value_tlv(
+        self, oid: Tuple[int, ...]
+    ) -> Optional[Tuple[Tuple[int, ...], bytes]]:
+        """
+        Return (next_oid, tlv) for the lexicographically next OID after *oid*,
+        or None if *oid* is at or past the end of the MIB.
+        Used to serve GETNEXT requests (and therefore snmpwalk).
+        """
+        table = self.oid_table()
+        sorted_oids = sorted(table)
+        for candidate in sorted_oids:
+            if candidate > oid:
+                return candidate, table[candidate]
+        return None
 
     # ── state mutators ────────────────────────────────────────────────────────
 
@@ -440,6 +511,10 @@ class UCTSState:
     def show(self) -> str:
         mac = ":".join(f"{b:x}" for b in self.dst_mac_h + self.dst_mac_l)
         state_names = {0: "Online/Standby", 1: "Running", 2: "Unknown"}
+        spll_modes  = {0: "na", 1: "grandmaster", 2: "master", 3: "slave"}
+        spll_states = {1: "startup", 2: "sync_nsec", 3: "sync_sec", 4: "sync_phase",
+                       5: "track_phase", 6: "wait_offs", 8: "ready"}
+        sfp_db      = {1: "notInDataBase", 2: "inDataBase"}
         return "\n".join([
             f"  State           : {self._ticks_state} ({state_names.get(self._ticks_state,'?')})",
             f"  Status word     : 0x{self.status_word:08X}  ({self.status_word})",
@@ -451,12 +526,22 @@ class UCTSState:
             f"  EventCount      : {self.event_count}",
             f"  BusyCount       : {self.busy_count}",
             f"  Throttle        : 0x{self.throttle:04X}  ({self.throttle})",
-            f"  Temperature     : {self.temperature / 10.0:.1f} °C  (raw {self.temperature})",
+            f"  Temperature     : {self.temperature:.4f} °C",
             f"  PortLinkStatus  : {self.port_link_status}  (2=up)",
             f"  TimeTAI         : {self.time_tai}",
             f"  TimeTAIString   : {self.tai_string}",
             f"  UpTime          : {self.uptime_str}",
             f"  WrpcSwVersion   : {self.wrpc_sw_version}",
+            f"  WrpcHwType      : {self.wrpc_hw_type}",
+            f"  WrpcBuildBy     : {self.wrpc_build_by}",
+            f"  WrpcBuildDate   : {self.wrpc_build_date}",
+            f"  SpllMode        : {self.spll_mode}  ({spll_modes.get(self.spll_mode,'?')})",
+            f"  SpllIrqCnt      : {self.spll_irq_cnt}",
+            f"  SpllSeqState    : {self.spll_seq_state}  ({spll_states.get(self.spll_seq_state,'?')})",
+            f"  SfpPn           : {self.sfp_pn!r}",
+            f"  SfpInDB         : {self.sfp_in_db}  ({sfp_db.get(self.sfp_in_db,'?')})",
+            f"  PortInternalTx  : {self.port_internal_tx}",
+            f"  PortInternalRx  : {self.port_internal_rx}",
             f"  --- Standard MIB-II ---",
             f"  sysDescr        : {self.sys_descr}",
             f"  sysContact      : {self.sys_contact}",
@@ -486,24 +571,37 @@ class SNMPAgentProtocol(asyncio.DatagramProtocol):
         log.info("SNMP agent ready")
 
     def datagram_received(self, data: bytes, addr: tuple) -> None:
-        parsed = _parse_get_request(data)
+        parsed = _parse_snmp_request(data)
         if parsed is None:
-            log.debug("SNMP: ignored non-GET packet from %s", addr)
+            log.debug("SNMP: ignored non-GET/GETNEXT packet from %s", addr)
             return
-        version, community, request_id, oids = parsed
-        log.debug("SNMP GET from %s  req_id=%d  oids=%d", addr, request_id, len(oids))
+        version, community, request_id, pdu_type, oids = parsed
+        log.debug("SNMP %s from %s  req_id=%d  oids=%d",
+                  "GET" if pdu_type == _T_GET_REQ else "GETNEXT",
+                  addr, request_id, len(oids))
 
         state.snmp_in_pkts += 1
 
         var_binds: List[Tuple[Tuple[int, ...], bytes]] = []
         for oid in oids:
-            tlv = state.oid_value_tlv(oid)
-            if tlv is None:
-                log.debug("  OID %s -> NoSuchInstance", oid)
-                tlv = _ber_nosuchinstance()
-            else:
-                log.debug("  OID %s -> %s", oid, tlv.hex())
-            var_binds.append((oid, tlv))
+            if pdu_type == _T_GET_REQ:
+                tlv = state.oid_value_tlv(oid)
+                if tlv is None:
+                    log.debug("  GET  %s -> NoSuchInstance", oid)
+                    tlv = _ber_nosuchinstance()
+                    var_binds.append((oid, tlv))
+                else:
+                    log.debug("  GET  %s -> %s", oid, tlv.hex())
+                    var_binds.append((oid, tlv))
+            else:  # GETNEXT
+                result = state.next_oid_value_tlv(oid)
+                if result is None:
+                    log.debug("  GETNEXT %s -> EndOfMibView", oid)
+                    var_binds.append((oid, _ber_endofmibview()))
+                else:
+                    next_oid, tlv = result
+                    log.debug("  GETNEXT %s -> %s  %s", oid, next_oid, tlv.hex())
+                    var_binds.append((next_oid, tlv))
 
         response = _build_response(community, request_id, var_binds)
         state.snmp_out_pkts += 1
@@ -584,13 +682,18 @@ async def _update_time() -> None:
 _HELP = """
 Commands:
   show                     Print all current variable values
-  set Temperature <val>    tenths of °C (e.g. 256 = 25.6°C)
+  set Temperature <val>    degrees C (e.g. 25.6)
   set EventCount <val>     Event counter
   set BusyCount <val>      Busy counter
   set Throttle <val>       Throttle (decimal or 0x hex)
   set DstIpAddr <x.x.x.x> Destination IP
   set DstPort <val>        Destination port
   set WrpcSwVersion <str>  WR software version string
+  set WrpcHwType <str>     WR hardware type string
+  set WrpcBuildBy <str>    WR build-by string
+  set WrpcBuildDate <str>  WR build date string
+  set SpllMode <n>         SPLL mode (0=na,1=grandmaster,2=master,3=slave)
+  set SpllSeqState <n>     SPLL sequencer state (8=ready)
   set FirmwareVersion <n>  Firmware version integer (bits 23:16 of status)
   set PortLinkStatus <n>   Port link status (0=na, 1=down, 2=up)
   set SysDescr <str>       sysDescr (MIB-II 1.3.6.1.2.1.1.1.0)
@@ -660,8 +763,8 @@ def _apply_terminal_command(line: str) -> bool:
 def _apply_set(var: str, val: str) -> None:
     try:
         if var == "Temperature":
-            state.temperature = int(val)
-            print(f"  -> Temperature={state.temperature} ({state.temperature/10:.1f}°C)")
+            state.temperature = float(val)
+            print(f"  -> Temperature={state.temperature:.4f} °C")
         elif var == "EventCount":
             state.event_count = int(val)
             print(f"  -> EventCount={state.event_count}")
@@ -680,6 +783,21 @@ def _apply_set(var: str, val: str) -> None:
         elif var == "WrpcSwVersion":
             state.wrpc_sw_version = val
             print(f"  -> WrpcSwVersion={state.wrpc_sw_version}")
+        elif var == "WrpcHwType":
+            state.wrpc_hw_type = val
+            print(f"  -> WrpcHwType={state.wrpc_hw_type}")
+        elif var == "WrpcBuildBy":
+            state.wrpc_build_by = val
+            print(f"  -> WrpcBuildBy={state.wrpc_build_by}")
+        elif var == "WrpcBuildDate":
+            state.wrpc_build_date = val
+            print(f"  -> WrpcBuildDate={state.wrpc_build_date}")
+        elif var == "SpllMode":
+            state.spll_mode = int(val)
+            print(f"  -> SpllMode={state.spll_mode}")
+        elif var == "SpllSeqState":
+            state.spll_seq_state = int(val)
+            print(f"  -> SpllSeqState={state.spll_seq_state}")
         elif var == "FirmwareVersion":
             state._fw_version = int(val)
             print(f"  -> FirmwareVersion={state._fw_version}  (status=0x{state.status_word:08X})")
