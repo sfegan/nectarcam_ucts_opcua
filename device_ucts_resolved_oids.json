@@ -1,10 +1,10 @@
 {
-  "ip": "127.0.0.1",
+  "host": "127.0.0.1",
   "port": 1161,
   "community": "public",
   "description": "UCTS SNMP Device",
   "opcua_path": "Monitoring",
-  "poll_interval": 1,
+  "poll_interval": 1.0,
   "oids": [
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
@@ -20,15 +20,15 @@
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
-      "opcua_name": "DstMacAddr_32MSB",
+      "opcua_name": "_DstMacAddr_32MSB",
       "opcua_type": "ByteString",
-      "description": "Destination MAC address of UCTS timestamps (32 MSB)"
+      "description": "(internal) 32 MSB of destination MAC address"
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
-      "opcua_name": "DstMacAddr_16LSB",
+      "opcua_name": "_DstMacAddr_16LSB",
       "opcua_type": "ByteString",
-      "description": "Destination MAC address of UCTS timestamps (16 LSB)"
+      "description": "(internal) 16 LSB of destination MAC address"
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
@@ -43,34 +43,28 @@
       "description": "Number of triggers accepted during the run"
     },
     {
+      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
+      "opcua_name": "_RawStatus",
+      "opcua_type": "ByteString",
+      "description": "(internal) raw uint32 status word as bytes"
+    },
+    {
+      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
+      "opcua_name": "Throttle",
+      "opcua_type": "Int64",
+      "description": "Throttle parameter of UCTS TiCkS"
+    },
+    {
       "oid": "1.3.6.1.4.1.96.101.1.7.1.0",
       "opcua_name": "PortLinkStatus",
       "opcua_type": "String",
       "description": "Port link status"
     },
     {
-      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
-      "opcua_name": "State",
-      "opcua_type": "Int32",
-      "description": "TiCkS state (1= Running, 0 = Online, 2=Unknown)"
-    },
-    {
-      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
-      "opcua_name": "Status",
-      "opcua_type": "String",
-      "description": "Status of TiCkS board (format, firmware, SPI, \u2026)"
-    },
-    {
       "oid": "1.3.6.1.4.1.96.101.1.3.1.3.1",
       "opcua_name": "Temperature",
       "opcua_type": "Float",
-      "description": "Temperature of the TiCkS PCB"
-    },
-    {
-      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
-      "opcua_name": "Throttle",
-      "opcua_type": "Int64",
-      "description": "Temperature of the TiCkS PCB"
+      "description": "Temperature of the TiCkS PCB (degrees C)"
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.2.1.0",
@@ -82,39 +76,60 @@
       "oid": "1.3.6.1.4.1.96.101.1.2.2.0",
       "opcua_name": "TimeTAIString",
       "opcua_type": "String",
-      "description": "TAI time string"
+      "description": "TAI time string (ISO 8601)"
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.2.3.0",
       "opcua_name": "UpTime",
       "opcua_type": "String",
-      "description": "Uptime of the UCTS"
+      "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')"
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.1.2.0",
       "opcua_name": "WrpcSwVersion",
       "opcua_type": "String",
       "description": "Version of the wrpc software"
-    },
-    {
-      "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
-      "opcua_name": "FirmwareVersion",
-      "opcua_type": "String",
-      "description": "Version of the TiCkS firmware"
     }
   ],
   "constants": [
-    {
-      "opcua_name": "DstMacAddr",
-      "opcua_type": "String",
-      "description": "Destination MAC address of UCTS timestamps",
-      "value": null
-    },
     {
       "opcua_name": "SoftwareVersion",
       "opcua_type": "String",
       "description": "Version of the UCTS controller",
       "value": "2.0.0"
+    },
+    {
+      "opcua_name": "Status",
+      "opcua_type": "String",
+      "description": "Status of TiCkS board (raw uint32 as decimal string)",
+      "value": null
+    },
+    {
+      "opcua_name": "DstMacAddr",
+      "opcua_type": "String",
+      "description": "Destination MAC address (aa:bb:cc:dd:ee:ff)",
+      "value": null
+    },
+    {
+      "opcua_name": "State",
+      "opcua_type": "Int32",
+      "description": "TiCkS state: 1=Running, 0=Online, 2=Unknown",
+      "value": null
+    },
+    {
+      "opcua_name": "FirmwareVersion",
+      "opcua_type": "String",
+      "description": "TiCkS firmware version (from Status bits 23:16)",
+      "value": null
+    },
+    {
+      "opcua_name": "UpTimeMilliseconds",
+      "opcua_type": "Double",
+      "description": "Uptime of the UCTS in milliseconds (derived from UpTime)",
+      "value": null
     }
-  ]
+  ],
+  "snmp_timeout": 2.0,
+  "snmp_retries": 1,
+  "default_lifetime": 120.0
 }
