@@ -100,8 +100,8 @@
     },
     {
       "opcua_name": "Status",
-      "opcua_type": "String",
-      "description": "Status of TiCkS board (raw uint32 as decimal string)",
+      "opcua_type": "Int64",
+      "description": "Status of TiCkS board (raw uint32 status word)",
       "value": null
     },
     {
