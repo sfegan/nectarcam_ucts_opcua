@@ -54,11 +54,12 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           PortLinkStatus   <- transformed: INTEGER enum → "na"/"down"/"up"
           State            <- derived: from Status bit 7
           Status           <- derived: raw uint32 as decimal string
-          Temperature      <- derived: _IntegerTemperature (Int32) / 10 → Float °C
+          Temperature      <- polled: DisplayString decoded to Float °C directly
           Throttle
           TimeTAI
           TimeTAIString    <- transformed: ISO 8601 with T separator
-          UpTime
+          UpTime           <- polled: timedelta → formatted String (e.g. "5:23:49.160000")
+          UpTimeMilliseconds <- derived: UpTime timedelta → Double milliseconds
           WrpcSwVersion
           SoftwareVersion  <- constant
           snmp_host                   <- built-in: SNMP device IP
@@ -72,9 +73,8 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
       _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)
-      _DstMacAddr_16LSB    <- 2 LSB of destination MAC (ByteString)
+      _DstMacAddr_16LSB    <- 2 LSB of destination MAC (ByteString, device pads to 4 bytes)
       _RawStatus           <- uint32 status word as bytes (ByteString)
-      _IntegerTemperature  <- raw tenths-of-°C integer from device (Int32)
 
 Usage
 -----
@@ -146,7 +146,6 @@ log = logging.getLogger("ucts_server")
 # never published as OPC UA nodes:
 #   _DstMacAddr_32MSB / _DstMacAddr_16LSB  → merged into DstMacAddr
 #   _RawStatus                              → decoded into Status/State/FirmwareVersion
-#   _IntegerTemperature                     → divided by 10 → Temperature (Float °C)
 #
 # Derived variables are declared as constants with value=None so the base
 # class creates their OPC UA nodes with BadWaitingForInitialData; they are
@@ -218,12 +217,14 @@ _UCTS_CONFIG: dict = {
             "description": "Port link status",
         },
         {
-            # Raw integer from device: tenths of °C (e.g. 243 → 24.3 °C).
-            # Kept local; write_variables derives the Float Temperature from it.
+            # wrpcTemperatureValue — MIB SYNTAX is DisplayString, device sends
+            # a decimal float string e.g. "41.9375" (degrees C directly).
+            # The bridge's _cast_to_ua() decodes the bytes to str before
+            # calling float(), so no derived variable or scaling is needed.
             "oid":         "1.3.6.1.4.1.96.101.1.3.1.3.1",
-            "opcua_name":  "_IntegerTemperature",
-            "opcua_type":  "Int32",
-            "description": "(internal) temperature in tenths of °C",
+            "opcua_name":  "Temperature",
+            "opcua_type":  "Float",
+            "description": "Temperature of the TiCkS PCB (degrees C)",
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
@@ -241,7 +242,7 @@ _UCTS_CONFIG: dict = {
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
             "opcua_type":  "String",
-            "description": "Uptime of the UCTS",
+            "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')",
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.1.2.0",
@@ -286,9 +287,9 @@ _UCTS_CONFIG: dict = {
             "value":       None,
         },
         {
-            "opcua_name":  "Temperature",
-            "opcua_type":  "Float",
-            "description": "Temperature of the TiCkS PCB (degrees C)",
+            "opcua_name":  "UpTimeMilliseconds",
+            "opcua_type":  "Double",
+            "description": "Uptime of the UCTS in milliseconds (derived from UpTime)",
             "value":       None,
         },
     ],
@@ -312,9 +313,17 @@ def _octetstr_to_uint32(raw_bytes: bytes) -> int:
 
 def _merge_mac(msb: bytes, lsb: bytes) -> str:
     """
-    Merge the two MAC OctetString OIDs into a single address string.
-    C++ get_ucts_dst_mac_addr() uses '%x' (lowercase, no zero-padding):
-        e.g. "44:a8:42:44:32:c9"
+    Merge the two PhysAddress OIDs into a colon-separated MAC address string.
+
+    Both OIDs arrive as raw bytes (pysnmp decodes PhysAddress as OctetString).
+    The MSB field carries the 4 most-significant bytes of the MAC address.
+    The LSB field is documented as "16 lsb" (2 bytes) but the device pads it
+    to 4 bytes (e.g. b'\\x8f\\x28\\x00\\x00'); only the first 2 bytes are used.
+
+    Format follows C++ get_ucts_dst_mac_addr(): lowercase hex, no zero-padding,
+    colon-separated — e.g. "68:5:ca:3a:8f:28".  Note that zero-padding is not
+    applied (matching the C++ %x format), so single-nibble bytes appear without
+    a leading zero.
     """
     b_msb = (msb + b"\x00" * 4)[:4]
     b_lsb = (lsb + b"\x00" * 2)[:2]
@@ -366,7 +375,7 @@ class UCTSPoller(SNMPPoller):
     - Compute derived store entries from local OIDs each cycle:
         · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
         · _RawStatus  →  Status (String), State (Int32), FirmwareVersion (String)
-        · _IntegerTemperature  →  Temperature (Float, ÷ 10)
+        · UpTime (String timedelta)  →  UpTimeMilliseconds (Double, ms)
     - Apply in-place transformations to published OIDs:
         · PortLinkStatus: INTEGER enum  →  "na" / "down" / "up"
         · TimeTAIString: reformat to ISO 8601 T separator
@@ -472,23 +481,32 @@ class UCTSPoller(SNMPPoller):
                 if entry is not None:
                     self._apply_staleness(name, entry, now)
 
-        # ── Temperature: _IntegerTemperature (Int32, tenths-°C) → Float °C ────
-        # Separating the raw integer OID from the published float avoids any
-        # type ambiguity: the OPC UA Temperature node is always a Float.
-        int_temp_entry = self._store.get("_IntegerTemperature")
-        temp_entry     = self._store.get("Temperature")
-
-        if temp_entry is not None:
-            if _entry_is_good(int_temp_entry):
+        # ── UpTimeMilliseconds: derived from UpTime (timedelta → Double ms) ────
+        # UpTime is a String (C++ compatible, e.g. "5:23:49.160000").
+        # UpTimeMilliseconds is a Double for clients that need arithmetic.
+        # The store value is a timedelta until _cast_to_ua converts it to String;
+        # we read it before that conversion happens.
+        uptime_entry   = self._store.get("UpTime")
+        uptime_ms_entry = self._store.get("UpTimeMilliseconds")
+        if uptime_ms_entry is not None:
+            if _entry_is_good(uptime_entry):
                 try:
-                    celsius = int(int_temp_entry.data_value.Value.Value) / 10.0
-                    temp_entry.data_value = _good_dv(celsius, "Float")
-                    temp_entry.timestamp  = now
-                except (ValueError, TypeError) as exc:
-                    log.warning("Temperature conversion error: %s", exc)
-                    self._apply_staleness("Temperature", temp_entry, now)
+                    td = uptime_entry.data_value.Value.Value
+                    if isinstance(td, str):
+                        # Already converted to string — parse it back
+                        # Format is H:MM:SS.ffffff or H:MM:SS
+                        import datetime as _dt
+                        parts = td.split(":")
+                        h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
+                        td = _dt.timedelta(hours=h, minutes=m, seconds=s)
+                    ms = td.total_seconds() * 1000.0
+                    uptime_ms_entry.data_value = _good_dv(ms, "Double")
+                    uptime_ms_entry.timestamp  = now
+                except Exception as exc:
+                    log.warning("UpTimeMilliseconds conversion error: %s", exc)
+                    self._apply_staleness("UpTimeMilliseconds", uptime_ms_entry, now)
             else:
-                self._apply_staleness("Temperature", temp_entry, now)
+                self._apply_staleness("UpTimeMilliseconds", uptime_ms_entry, now)
 
         # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
         # In-place transformation on an already-Good entry; timestamp is left
@@ -842,6 +860,10 @@ def _parse_args() -> argparse.Namespace:
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     p.add_argument("--log-file", default=None,
                    help="Optional rotating log file path")
+    p.add_argument("--dump-device-config", action="store_true",
+                   help=(
+                       "Print the fully-resolved device configuration as JSON to stdout "                       "(incorporating all CLI overrides) and exit immediately. "                       "Useful for generating a --device-config file."
+                   ))
     return p.parse_args()
 
 
@@ -865,6 +887,11 @@ async def _async_main() -> None:
     cfg["snmp_retries"]     = args.snmp_retries
     cfg["opcua_path"]       = args.monitoring_path
     cfg["default_lifetime"] = args.variable_lifetime
+
+    if args.dump_device_config:
+        import json
+        print(json.dumps(cfg, indent=2))
+        return
 
     poller    = UCTSPoller.from_dict(cfg)
     commander = UCTSCommander(
