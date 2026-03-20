@@ -1,6 +1,6 @@
 # NectarCAM UCTS OPC UA Server
 
-OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes seven ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board.
+OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes seven ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board. See the [TiCkS documentation](https://mdpunch.pages.in2p3.fr/ticks/index.html) for full hardware and firmware details.
 
 ## Dependencies
 
@@ -50,22 +50,22 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `BusyCount` | Int32 | Number of busy/rejected triggers |
-| `DstIpAddr` | String | Destination IP address for timestamp delivery |
-| `DstMacAddr` | String | Destination MAC address (merged from two SNMP OIDs, colon-separated) |
-| `DstPort` | Int32 | Destination UDP port for timestamp delivery |
-| `EventCount` | Int32 | Number of triggered events |
-| `FirmwareVersion` | String | Firmware version extracted from status bits 23:16 |
-| `PortLinkStatus` | String | Ethernet link status: `na`, `down`, or `up` |
-| `State` | Int32 | TiCkS operating state: `0` = Online/Standby, `1` = Running, `2` = Unknown (from status bit 7) |
-| `Status` | String | Raw uint32 status word as decimal string |
-| `Temperature` | Float | Board temperature (°C) |
-| `Throttle` | Int32 | Trigger throttle value |
-| `TimeTAI` | Int64 | Current time in TAI seconds |
+| `BusyCount` | Int32 | Cumulative count of busy/rejected triggers since last reset |
+| `DstIpAddr` | String | Destination IP address for UDP timestamp delivery (default derived from TiCkS IP: last 10 bits replaced with `3.250`) |
+| `DstMacAddr` | String | Destination MAC address for UDP timestamp delivery (merged from two SNMP OIDs, colon-separated) |
+| `DstPort` | Int32 | Destination UDP port for timestamp delivery (default: `55000`) |
+| `EventCount` | Int32 | Cumulative count of read-out trigger events since last reset |
+| `FirmwareVersion` | String | Firmware version number, extracted from `Status` bits 23:16 |
+| `PortLinkStatus` | String | White Rabbit ethernet link status: `na`, `down`, or `up` |
+| `State` | Int32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Reset/Standby (TDC and counters stopped), `1` = Running (TDC and counters active), `2` = Unknown |
+| `Status` | String | Raw uint32 SNMP status word as decimal string. Bit layout (LSB first): bit 0 = throttle enabled, bit 1 = WR time valid, bit 2 = SPI enabled, bit 7 = counters/TDC enabled (`rst_cnt_ack`), bits 16–23 = firmware version, bits 24–31 = data format version |
+| `Temperature` | Float | PCB temperature (°C) from the WR node temperature sensor |
+| `Throttle` | Int32 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
+| `TimeTAI` | Int64 | Current board time in TAI seconds (from White Rabbit) |
 | `TimeTAIString` | String | Current TAI time as ISO 8601 string |
 | `UpTime` | String | Board uptime as formatted string (e.g. `5:23:49.160000`) |
 | `UpTimeMilliseconds` | Double | Board uptime in milliseconds |
-| `WrpcSwVersion` | String | White Rabbit Precise Clock software version |
+| `WrpcSwVersion` | String | White Rabbit PTP core software version |
 | `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
 | `snmp_host` | String | IP address of the SNMP device |
 | `snmp_port` | Int32 | SNMP UDP port |
