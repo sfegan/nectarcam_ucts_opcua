@@ -53,7 +53,7 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           FirmwareVersion  <- derived: from Status bits 23:16
           PortLinkStatus   <- transformed: INTEGER enum → "na"/"down"/"up"
           State            <- derived: from Status bit 7
-          Status           <- derived: raw uint32 as decimal string
+          Status           <- derived: raw uint32 as Int64
           Temperature      <- polled: DisplayString decoded to Float °C directly
           Throttle
           TimeTAI
@@ -264,8 +264,8 @@ _UCTS_CONFIG: dict = {
         # when their source OIDs are unavailable (0 = never expire).
         {
             "opcua_name":  "Status",
-            "opcua_type":  "String",
-            "description": "Status of TiCkS board (raw uint32 as decimal string)",
+            "opcua_type":  "Int64",
+            "description": "Status of TiCkS board (raw uint32 status word)",
             "value":       None,
         },
         {
@@ -374,7 +374,7 @@ class UCTSPoller(SNMPPoller):
     - Poll all UCTS SNMP OIDs on the configured interval.
     - Compute derived store entries from local OIDs each cycle:
         · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
-        · _RawStatus  →  Status (String), State (Int32), FirmwareVersion (String)
+        · _RawStatus  →  Status (Int64), State (Int32), FirmwareVersion (String)
         · UpTime (String timedelta)  →  UpTimeMilliseconds (Double, ms)
     - Apply in-place transformations to published OIDs:
         · PortLinkStatus: INTEGER enum  →  "na" / "down" / "up"
@@ -447,7 +447,7 @@ class UCTSPoller(SNMPPoller):
                 try:
                     status_int = _octetstr_to_uint32(bytes(raw))
                     for entry, name, val in (
-                        (status_entry, "Status",          str(status_int)),
+                        (status_entry, "Status",          status_int),
                         (state_entry,  "State",           _state_from_status(status_int)),
                         (fw_entry,     "FirmwareVersion", _fw_version_from_status(status_int)),
                     ):
