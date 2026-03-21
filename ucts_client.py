@@ -64,10 +64,15 @@ log = logging.getLogger("ucts_client")
 # ─────────────────────────────────────────────────────────────────────────────
 
 _MONITORING_VARS = [
+    # SNMP-polled and derived variables
     "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort", "EventCount",
     "FirmwareVersion", "PortLinkStatus", "State", "Status", "Temperature",
-    "Throttle", "TimeTAI", "TimeTAIString", "UpTime", "WrpcSwVersion",
-    "SoftwareVersion", "host", "port", "cls_state",
+    "Throttle", "TimeTAI", "TimeTAIString", "UpTime", "UpTimeMilliseconds",
+    "WrpcSwVersion", "SoftwareVersion",
+    # Built-in server variables
+    "snmp_host", "snmp_port", "snmp_polling_timestamp", "snmp_polling_age",
+    "snmp_polling_interval", "snmp_polling_success_count",
+    "snmp_server_online", "cls_state",
 ]
 
 _METHODS = [
@@ -330,10 +335,11 @@ async def _dispatch(client: UCTSClient, line: str) -> bool:
             await client.cmd_schedule_trigger(parts[1])
 
     elif cmd == "xml":
-        if len(parts) < 2:
+        rest = line.strip().split(None, 1)
+        if len(rest) < 2:
             print("Usage: xml <xml_string>")
         else:
-            await client.cmd_xml_configuration(parts[1])
+            await client.cmd_xml_configuration(rest[1])
 
     elif cmd == "setip":
         if len(parts) < 2:
@@ -382,7 +388,7 @@ def _parse_args() -> argparse.Namespace:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--endpoint",
-                   default="opc.tcp://localhost:4840/nectarcam/",
+                   default="opc.tcp://localhost:4840/ucts/",
                    help="OPC UA server endpoint URL")
     p.add_argument("--namespace",
                    default="http://cta-observatory.org/nectarcam/ucts/",
