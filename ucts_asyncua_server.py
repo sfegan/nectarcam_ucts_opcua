@@ -700,11 +700,12 @@ class UCTSCommander:
         ----------
         parent_node  asyncua Object node that will own the methods (UCTS root).
         ns           OPC UA namespace index.
-        poller       Optional UCTSPoller reference; when Start() succeeds an
-                     immediate poll is triggered so variables update without
-                     waiting for the next poll interval.
+        poller       Optional UCTSPoller reference; when a state-changing
+                     command succeeds, an immediate SNMP reload is triggered
+                     so monitoring variables update without waiting for the
+                     next scheduled poll interval.
         """
-        commander = self   # closure; self.ucts_ip may change via Configure
+        commander = self
 
         @uamethod
         async def Configure(parent,
@@ -713,11 +714,11 @@ class UCTSCommander:
                             PC_MAC_ADDRESS:  str) -> int:
             log.info("Configure: pc=%s ucts=%s mac=%s",
                      PC_IP_ADDRESS, UCTS_IP_ADDRESS, PC_MAC_ADDRESS)
-            commander.ucts_ip = UCTS_IP_ADDRESS.strip()
-            if poller is not None:
-                poller.host = commander.ucts_ip
-                poller._transport_target = None
-            rc = await commander.set_mac(PC_MAC_ADDRESS.strip())
+            # Set destination MAC (func 0x1) and destination IP (func 0x4) on the board.
+            # UCTS_IP_ADDRESS (the board's own IP) is accepted for ICD compatibility but
+            # ignored -- the board IP is fixed at startup via --ucts-ip.
+            rc  = await commander.set_mac(PC_MAC_ADDRESS.strip())
+            rc |= await commander.set_dst_ip(PC_IP_ADDRESS.strip())
             if rc == 0 and poller is not None:
                 await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
                 await poller.force_reload()

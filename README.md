@@ -52,7 +52,7 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 |----------|------|-------------|
 | `BusyCount` | Int32 | Cumulative count of busy/rejected triggers since last reset |
 | `DstIpAddr` | String | Destination IP address for UDP timestamp delivery (default derived from TiCkS IP: last 10 bits replaced with `3.250`) |
-| `DstMacAddr` | String | Destination MAC address for UDP timestamp delivery (merged from two SNMP OIDs, colon-separated) |
+| `DstMacAddr` | String | Destination MAC address for UDP timestamp delivery (merged from two SNMP OIDs, colon-separated: `01:23:45:67:89:AB`) |
 | `DstPort` | Int32 | Destination UDP port for timestamp delivery (default: `55000`) |
 | `EventCount` | Int32 | Cumulative count of read-out trigger events since last reset |
 | `FirmwareVersion` | String | Firmware version number, extracted from `Status` bits 23:16 |
