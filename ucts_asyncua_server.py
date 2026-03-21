@@ -327,7 +327,7 @@ def _merge_mac(msb: bytes, lsb: bytes) -> str:
     """
     b_msb = (msb + b"\x00" * 4)[:4]
     b_lsb = (lsb + b"\x00" * 2)[:2]
-    return ":".join(f"{b:x}" for b in b_msb + b_lsb)
+    return ":".join(f"{b:02X}" for b in b_msb + b_lsb)
 
 
 def _state_from_status(status: int) -> int:
