@@ -555,11 +555,18 @@ class UCTSCommander:
 
     Attributes
     ----------
-    ucts_ip       Current IP of the TiCkS board (updated by Configure at runtime).
-    ucts_cmd_port UDP command port of TiCkS (default 55010).
+    ucts_ip            Current IP of the TiCkS board (updated by Configure at runtime).
+    ucts_cmd_port      UDP command port of TiCkS (default 55010).
+    POST_CMD_RELOAD_DELAY
+                       Seconds to wait after an ACK is received before issuing a
+                       force_reload() so the device's SNMP agent has time to
+                       reflect the new state.  Tune upward if reads after commands
+                       still show stale values.
     """
     ucts_ip:      str
     ucts_cmd_port: int = 55010
+
+    POST_CMD_RELOAD_DELAY: float = field(default=0.05, init=False, repr=False)
 
     # ── low-level UDP transport ───────────────────────────────────────────────
 
@@ -710,21 +717,29 @@ class UCTSCommander:
             if poller is not None:
                 poller.host = commander.ucts_ip
                 poller._transport_target = None
-            return int(await commander.set_mac(PC_MAC_ADDRESS.strip()))
+            rc = await commander.set_mac(PC_MAC_ADDRESS.strip())
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
 
         @uamethod
         async def Start(parent) -> int:
             log.info("Start -> %s:%d", commander.ucts_ip, commander.ucts_cmd_port)
             rc = await commander.get_ready()
             if rc == 0 and poller is not None:
-                await asyncio.sleep(1.0)
-                await poller._poll_once()
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
             return int(rc)
 
         @uamethod
         async def Reset(parent) -> int:
             log.info("Reset -> %s:%d", commander.ucts_ip, commander.ucts_cmd_port)
-            return int(await commander.reset())
+            rc = await commander.reset()
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
 
         @uamethod
         async def ScheduleTrigger(parent, timestamp_UTC_ISO: str) -> int:
@@ -740,17 +755,28 @@ class UCTSCommander:
             if rc == 0:
                 log.info("XMLConfiguration: issuing Reset")
                 rc |= await commander.reset()
+            if poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
             return int(rc)
 
         @uamethod
         async def SetDstIpAddress(parent, ip_address: str) -> int:
             log.info("SetDstIpAddress: %s", ip_address)
-            return int(await commander.set_dst_ip(ip_address.strip()))
+            rc = await commander.set_dst_ip(ip_address.strip())
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
 
         @uamethod
         async def SetDstPort(parent, port: int) -> int:
             log.info("SetDstPort: %d", port)
-            return int(await commander.set_dst_port(int(port)))
+            rc = await commander.set_dst_port(int(port))
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
 
         def _arg(name: str, type_node_id: ua.NodeId) -> ua.Argument:
             a = ua.Argument()
