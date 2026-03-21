@@ -70,11 +70,11 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `snmp_host` | String | IP address of the SNMP device |
 | `snmp_port` | UInt16 | SNMP UDP port |
 | `snmp_polling_timestamp` | DateTime | Timestamp of the most recent poll |
-| `snmp_polling_age` | Double | Age of the most recent poll (seconds) |
+| `snmp_polling_age` | Double | Seconds since the last successful poll; keeps incrementing while the device is offline |
 | `snmp_polling_interval` | Double | Current polling interval (seconds) |
 | `snmp_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
-| `snmp_server_online` | Boolean | `True` when the SNMP agent is reachable |
-| `cls_state` | Byte | Bridge connection state: `0` = offline, `1` = online |
+| `snmp_server_online` | Boolean | `True` when the SNMP agent is reachable (set exclusively by the bridge; never overridden by application logic) |
+| `cls_state` | Byte | Application-level device state: `0` = offline, `1` = online (may be overridden by subclasses) |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 
@@ -82,26 +82,28 @@ Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, an
 
 All methods are under `Objects/UCTS/` and return `Int32`: `0` = success, non-zero = failure. UDP commands include a 2-second echo-back timeout.
 
+Methods that change hardware state (`Start`, `Reset`, `Configure`, `XMLConfiguration`, `SetDstIpAddress`, `SetDstPort`) automatically trigger a full SNMP poll after the ACK is received (with a short configurable settling delay, default 50 ms, controlled by `UCTSCommander.POST_CMD_RELOAD_DELAY`) so that monitoring variables reflect the new state without waiting for the next scheduled poll interval. `ScheduleTrigger` does not trigger a reload since it schedules a future event rather than changing immediately-readable state.
+
 ### `Start() → Int32`
-Enable the TDC, reset event/busy counters, enable external trigger reception.
+Enable the TDC, reset event/busy counters, enable external trigger reception. On success, triggers an immediate SNMP reload.
 
 ### `Reset() → Int32`
-Stop the TDC, reset all event and busy counters.
+Stop the TDC, reset all event and busy counters. On success, triggers an immediate SNMP reload.
 
 ### `Configure(PC_IP_ADDRESS: String, UCTS_IP_ADDRESS: String, PC_MAC_ADDRESS: String) → Int32`
-Set the destination IP and MAC address for timestamp delivery and update the UCTS board's own IP.
+Set the destination IP and MAC address for timestamp delivery and update the UCTS board's own IP. On success, triggers an immediate SNMP reload.
 
 ### `ScheduleTrigger(timestamp_UTC_ISO: String) → Int32`
-Schedule a software trigger at a UTC timestamp (ISO 8601, e.g. `2025-06-15T14:30:45.123456`). Converted to TAI (hardcoded 37 s offset, valid since 2017) and encoded into a 64-bit command word at 8 ns resolution.
+Schedule a software trigger at a UTC timestamp (ISO 8601, e.g. `2025-06-15T14:30:45.123456`). Converted to TAI (hardcoded 37 s offset, valid since 2017) and encoded into a 64-bit command word at 8 ns resolution. Does not trigger an SNMP reload.
 
 ### `SetDstIpAddress(ip_address: String) → Int32`
-Set the destination IP address for timestamp delivery.
+Set the destination IP address for timestamp delivery. On success, triggers an immediate SNMP reload.
 
 ### `SetDstPort(port: Int32) → Int32`
-Set the destination UDP port for timestamp delivery.
+Set the destination UDP port for timestamp delivery. On success, triggers an immediate SNMP reload.
 
 ### `XMLConfiguration(XML_Message: String) → Int32`
-Apply configuration via an XML message fragment. Supported tags: `<MACAddress>`, `<DstIpAddress>`, `<DstPort>`, `<SPI>`. Returns `0` only if all commands succeed.
+Apply configuration via an XML message fragment. Supported tags: `<MACAddress>`, `<DstIpAddress>`, `<DstPort>`, `<SPI>`. Returns `0` only if all commands succeed. Always triggers an immediate SNMP reload (regardless of return code, since partial configuration may still have changed device state).
 
 ## Local Testing
 
