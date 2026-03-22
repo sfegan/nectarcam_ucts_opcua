@@ -1,6 +1,6 @@
 # NectarCAM UCTS OPC UA Server
 
-OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes seven ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board. See the [TiCkS documentation](https://mdpunch.pages.in2p3.fr/ticks/index.html) for full hardware and firmware details.
+OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes nine ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board. See the [TiCkS documentation](https://mdpunch.pages.in2p3.fr/ticks/index.html) for full hardware and firmware details.
 
 ## Dependencies
 
@@ -36,6 +36,7 @@ Full options:
 | `--snmp-retries N` | `1` | SNMP retries after first attempt |
 | `--monitoring-path S` | `Monitoring` | OPC UA path for monitoring node |
 | `--variable-lifetime F` | `120.0` | Variable lifetime (seconds) |
+| `--post-cmd-delay F` | `0.2` | Settling delay (seconds) before SNMP reload after a command ACK |
 | `--opcua-endpoint URL` | `opc.tcp://0.0.0.0:4840/ucts/` | OPC UA endpoint |
 | `--opcua-namespace URI` | — | OPC UA namespace URI |
 | `--opcua-user U:P` | — | Enable username/password authentication |
@@ -82,7 +83,7 @@ Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, an
 
 All methods are under `Objects/UCTS/` and return `Int32`: `0` = success, non-zero = failure. UDP commands include a 2-second echo-back timeout.
 
-Methods that change hardware state (`Start`, `Reset`, `Configure`, `XMLConfiguration`, `SetDstIpAddress`, `SetDstPort`) automatically trigger a full SNMP poll after the ACK is received (with a short configurable settling delay, default 50 ms, controlled by `UCTSCommander.POST_CMD_RELOAD_DELAY`) so that monitoring variables reflect the new state without waiting for the next scheduled poll interval. `ScheduleTrigger` does not trigger a reload since it schedules a future event rather than changing immediately-readable state.
+Methods that change hardware state (`Start`, `Reset`, `Configure`, `XMLConfiguration`, `SetDstIpAddress`, `SetDstPort`, `SetDstMacAddress`, `SetUseSpiReception`) automatically trigger a full SNMP poll after the ACK is received (with a short configurable settling delay, default 200 ms, controlled by `--post-cmd-delay`) so that monitoring variables reflect the new state without waiting for the next scheduled poll interval. `ScheduleTrigger` does not trigger a reload since it schedules a future event rather than changing immediately-readable state.
 
 ### `Start() → Int32`
 Enable the TDC, reset event/busy counters, enable external trigger reception. On success, triggers an immediate SNMP reload.
@@ -102,8 +103,27 @@ Set the destination IP address for timestamp delivery. On success, triggers an i
 ### `SetDstPort(port: Int32) → Int32`
 Set the destination UDP port for timestamp delivery. On success, triggers an immediate SNMP reload.
 
+### `SetDstMacAddress(mac_address: String) → Int32`
+Set the destination MAC address for timestamp delivery (e.g. `68:05:ca:3a:8f:28`). Colons, hyphens, and spaces are stripped before encoding. On success, triggers an immediate SNMP reload.
+
+### `SetUseSpiReception(enable: Boolean) → Int32`
+Enable (`True`) or disable (`False`) SPI trigger reception on the TiCkS board. On success, triggers an immediate SNMP reload.
+
 ### `XMLConfiguration(XML_Message: String) → Int32`
-Apply configuration via an XML message fragment. Supported tags: `<MACAddress>`, `<DstIpAddress>`, `<DstPort>`, `<SPI>`. Returns `0` only if all commands succeed. Always triggers an immediate SNMP reload (regardless of return code, since partial configuration may still have changed device state).
+Apply configuration via an XML message. The message must contain a `<UCTS>` root element with named child elements carrying their values in a `value` attribute, matching the C++ MOS server schema:
+
+```xml
+<UCTS>
+  <OPCUA_server_IP_Address value="192.168.1.10"/>  <!-- accepted, ignored -->
+  <UCTS_IP_ADDRESS         value="10.10.3.99"/>    <!-- accepted, ignored -->
+  <CDTS_MAC_Address        value="68:05:ca:3a:8f:28"/>  <!-- required -->
+  <DST_IP_ADDRESS          value="10.10.3.250"/>         <!-- optional -->
+  <DstPort                 value="55000"/>               <!-- optional, Python extension -->
+  <SPI                     value="1"/>                   <!-- optional, Python extension -->
+</UCTS>
+```
+
+`CDTS_MAC_Address` is required; all other tags are optional. `OPCUA_server_IP_Address` and `UCTS_IP_ADDRESS` are accepted for compatibility with existing XML messages but have no effect (the board IP and server address are fixed at startup). Returns `0` only if all commands succeed. On completion, triggers an immediate SNMP reload.
 
 ## Local Testing
 
@@ -123,3 +143,22 @@ python ucts_asyncua_server.py --ucts-ip localhost --ucts-snmp-port 1161
 ```bash
 python ucts_client.py --endpoint opc.tcp://localhost:4840/ucts/
 ```
+
+Available client commands:
+
+| Command | Description |
+|---------|-------------|
+| `read [VarName]` | Read one or all monitoring variables |
+| `sub [Var ...]` | Subscribe to variables; changes print automatically |
+| `unsub` | Cancel active subscription |
+| `configure <pc_ip> <ucts_ip> <mac>` | Call `Configure` |
+| `start` | Call `Start` (GetReady) |
+| `reset` | Call `Reset` |
+| `trigger <UTC_ISO>` | Call `ScheduleTrigger` |
+| `xml <xml_string>` | Call `XMLConfiguration` |
+| `setip <ip>` | Call `SetDstIpAddress` |
+| `setport <port>` | Call `SetDstPort` |
+| `setmac <mac>` | Call `SetDstMacAddress` (e.g. `setmac 68:05:ca:3a:8f:28`) |
+| `setspi <0\|1>` | Call `SetUseSpiReception` |
+| `browse` | Print the UCTS node tree |
+| `help` | Show full command help |
