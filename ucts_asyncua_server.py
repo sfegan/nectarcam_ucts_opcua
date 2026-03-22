@@ -8,7 +8,7 @@ Three-class design, each with a single responsibility:
   UCTSPoller(SNMPPoller)
       Pure SNMP monitoring.  Overrides write_variables() to:
         - compute derived store entries (DstMacAddr, Status, State,
-          FirmwareVersion, UpTimeMilliseconds) from local OIDs when their
+          FirmwareVersion) from local OIDs when their
           sources are Good, or delegate to self._apply_staleness() when not.
         - apply in-place transformations to PortLinkStatus (INTEGER → string)
           and TimeTAIString (ISO 8601 separator normalisation).
@@ -51,7 +51,6 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           TimeTAI
           TimeTAIString    <- transformed: ISO 8601 with T separator
           UpTime           <- polled: timedelta → formatted String (e.g. "5:23:49.160000")
-          UpTimeMilliseconds <- derived: UpTime timedelta → Double milliseconds
           WrpcSwVersion
           SoftwareVersion  <- constant
           snmp_host                   <- built-in: SNMP device IP
@@ -105,7 +104,7 @@ import time
 from dataclasses import dataclass, field
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 # ── bridge imports ────────────────────────────────────────────────────────────
@@ -306,12 +305,6 @@ _UCTS_CONFIG: dict = {
             "description": "TiCkS firmware version (from Status bits 23:16)",
             "value":       None,
         },
-        {
-            "opcua_name":  "UpTimeMilliseconds",
-            "opcua_type":  "Double",
-            "description": "Uptime of the UCTS in milliseconds (derived from UpTime)",
-            "value":       None,
-        },
     ],
 }
 
@@ -404,7 +397,6 @@ class UCTSPoller(SNMPPoller):
     - Compute derived store entries from local OIDs each cycle:
         · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
         · _RawStatus  →  Status (Int64), State (Int32), FirmwareVersion (String)
-        · UpTime (String timedelta)  →  UpTimeMilliseconds (Double, ms)
     - Apply in-place transformations to published OIDs:
         · PortLinkStatus: INTEGER enum  →  "na" / "down" / "up"
         · TimeTAIString: reformat to ISO 8601 T separator
@@ -531,32 +523,6 @@ class UCTSPoller(SNMPPoller):
             ):
                 if entry is not None:
                     self._apply_staleness(name, entry, now)
-
-        # ── UpTimeMilliseconds: derived from UpTime (timedelta → Double ms) ────
-        # UpTime is a String (C++ compatible, e.g. "5:23:49.160000").
-        # UpTimeMilliseconds is a Double for clients that need arithmetic.
-        # The store value is a timedelta until _cast_to_ua converts it to String;
-        # we read it before that conversion happens.
-        uptime_entry   = self._store.get("UpTime")
-        uptime_ms_entry = self._store.get("UpTimeMilliseconds")
-        if uptime_ms_entry is not None:
-            if _entry_is_good(uptime_entry):
-                try:
-                    td = uptime_entry.data_value.Value.Value
-                    if isinstance(td, str):
-                        # Already converted to string — parse it back
-                        # Format is H:MM:SS.ffffff or H:MM:SS
-                        parts = td.split(":")
-                        h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
-                        td = timedelta(hours=h, minutes=m, seconds=s)
-                    ms = td.total_seconds() * 1000.0
-                    uptime_ms_entry.data_value = _good_dv(ms, "Double")
-                    uptime_ms_entry.timestamp  = now
-                except Exception as exc:
-                    log.warning("UpTimeMilliseconds conversion error: %s", exc)
-                    self._apply_staleness("UpTimeMilliseconds", uptime_ms_entry, now)
-            else:
-                self._apply_staleness("UpTimeMilliseconds", uptime_ms_entry, now)
 
         # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
         # In-place transformation — only run when a fresh SNMP value arrived

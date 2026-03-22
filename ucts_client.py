@@ -70,7 +70,7 @@ _MONITORING_VARS = [
     # SNMP-polled and derived variables
     "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort", "EventCount",
     "FirmwareVersion", "PortLinkStatus", "State", "Status", "Temperature",
-    "Throttle", "TimeTAI", "TimeTAIString", "UpTime", "UpTimeMilliseconds",
+    "Throttle", "TimeTAI", "TimeTAIString", "UpTime",
     "WrpcSwVersion", "SoftwareVersion", "tai_offset",
     # Built-in server variables
     "snmp_host", "snmp_port", "snmp_polling_timestamp", "snmp_polling_age",

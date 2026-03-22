@@ -66,7 +66,6 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `TimeTAI` | Int64 | Current board time in TAI seconds (from White Rabbit) |
 | `TimeTAIString` | String | Current TAI time as ISO 8601 string |
 | `UpTime` | String | Board uptime as formatted string (e.g. `5:23:49.160000`) |
-| `UpTimeMilliseconds` | Double | Board uptime in milliseconds |
 | `WrpcSwVersion` | String | White Rabbit PTP core software version |
 | `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
 | `tai_offset` | Int32 | TAI minus UTC offset in seconds as configured in this server (set via `--tai-offset` or `SetTaiOffset`). Reflects the server's working assumption and is not an authoritative statement of the current IERS value |
