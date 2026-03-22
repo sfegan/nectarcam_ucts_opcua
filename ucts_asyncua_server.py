@@ -280,7 +280,7 @@ _UCTS_CONFIG: dict = {
         {
             "opcua_name":  "State",
             "opcua_type":  "Int32",
-            "description": "TiCkS state: 1=Running, 0=Online, 2=Unknown",
+            "description": "TiCkS state: 1=Running, 0=Online/Standby (from Status bit 7)",
             "value":       None,
         },
         {
@@ -332,8 +332,19 @@ def _merge_mac(msb: bytes, lsb: bytes) -> str:
 
 
 def _state_from_status(status: int) -> int:
-    """bit 7: 1=Running, 0=Online/Standby; 0 input → 2=Unknown."""
-    return 2 if status == 0 else int((status >> 7) & 0x1)
+    """
+    Derive TiCkS state from status word bit 7 (rst_cnt_ack).
+
+    Per ICD section 2.6.2.7:
+      1 = Running  (bit 7 set:  TDC and counters active)
+      0 = Online   (bit 7 clear: TDC and counters stopped / Standby)
+
+    Note: state 2 (Unknown) is NOT derived here.  When the status word
+    cannot be read at all, the store entry is already marked
+    BadNoCommunication via _apply_staleness(), so this function is only
+    called when the SNMP response is Good and the value is valid.
+    """
+    return int((status >> 7) & 0x1)
 
 
 def _fw_version_from_status(status: int) -> str:

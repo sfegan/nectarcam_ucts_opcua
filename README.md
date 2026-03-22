@@ -58,7 +58,7 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `EventCount` | Int32 | Cumulative count of read-out trigger events since last reset |
 | `FirmwareVersion` | String | Firmware version number, extracted from `Status` bits 23:16 |
 | `PortLinkStatus` | String | White Rabbit ethernet link status: `na`, `down`, or `up` |
-| `State` | Int32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Reset/Standby (TDC and counters stopped), `1` = Running (TDC and counters active), `2` = Unknown |
+| `State` | Int32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Online/Standby (TDC and counters stopped), `1` = Running (TDC and counters active) |
 | `Status` | Int64 | Raw uint32 SNMP status word. Bit layout (LSB first): bit 0 = throttle enabled, bit 1 = WR time valid, bit 2 = SPI enabled, bit 7 = counters/TDC enabled (`rst_cnt_ack`), bits 16–23 = firmware version, bits 24–31 = data format version |
 | `Temperature` | Float | PCB temperature (°C) from the WR node temperature sensor |
 | `Throttle` | Int64 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
