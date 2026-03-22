@@ -147,6 +147,10 @@ log = logging.getLogger("ucts_server")
 # computed and their store entries updated in write_variables().
 # ─────────────────────────────────────────────────────────────────────────────
 
+_UDP_TIMEOUT   = 2.0   # seconds to wait for TiCkS echo-back acknowledge
+_TAI_UTC_DELTA = 37    # TAI − UTC in seconds; last updated 2016-12-31 (IERS bulletin C 53)
+                       # Check https://www.ietf.org/timezones/data/leap-seconds.list if updating
+
 _UCTS_CONFIG: dict = {
     "host":          "10.10.3.99",   # overridden at runtime via --ucts-ip
     "port":          161,
@@ -252,6 +256,15 @@ _UCTS_CONFIG: dict = {
             "opcua_type":  "String",
             "description": "Version of the UCTS controller",
             "value":       "2.0.0",
+        },
+        {
+            "opcua_name":  "tai_offset",
+            "opcua_type":  "Int32",
+            "description": "TAI minus UTC offset in seconds as configured in this server "
+                           "(set via --tai-offset or SetTaiOffset). This reflects the "
+                           "server's working assumption and is not an authoritative "
+                           "statement of the current IERS value.",
+            "value":       _TAI_UTC_DELTA,
         },
         # Derived variables — computed in write_variables() from local OIDs.
         # value=None → base class creates OPC UA node with BadWaitingForInitialData.
@@ -389,6 +402,28 @@ class UCTSPoller(SNMPPoller):
 
     No knowledge of UDP commands or OPC UA Methods.
     """
+
+    def get_tai_offset(self) -> int:
+        """Return the current TAI−UTC offset in seconds from the store."""
+        entry = self._store.get("tai_offset")
+        if entry is not None and entry.data_value.Value is not None:
+            return int(entry.data_value.Value.Value)
+        return _TAI_UTC_DELTA
+
+    def set_tai_offset(self, offset: int) -> None:
+        """
+        Update the TAI−UTC offset in the store and its OPC UA node.
+
+        Called by the SetTaiOffset OPC UA method or at startup via --tai-offset.
+        The new value takes effect immediately for all subsequent ScheduleTrigger
+        calls.
+        """
+        entry = self._store.get("tai_offset")
+        if entry is None:
+            log.error("set_tai_offset: tai_offset not found in store")
+            return
+        entry.data_value = _good_dv(int(offset), "Int32")
+        log.info("TAI offset updated to %d s", offset)
 
     # ── write_variables ───────────────────────────────────────────────────────
 
@@ -546,8 +581,6 @@ class UCTSPoller(SNMPPoller):
 # UCTSCommander -- all UDP command logic, no OPC UA / SNMP knowledge
 # ─────────────────────────────────────────────────────────────────────────────
 
-_UDP_TIMEOUT   = 2.0   # seconds to wait for TiCkS echo-back acknowledge
-_TAI_UTC_DELTA = 37    # TAI minus UTC offset in seconds (correct as of 2017)
 
 
 @dataclass
@@ -558,7 +591,7 @@ class UCTSCommander:
 
     Attributes
     ----------
-    ucts_ip            Current IP of the TiCkS board (updated by Configure at runtime).
+    ucts_ip            Current IP of the TiCkS board.
     ucts_cmd_port      UDP command port of TiCkS (default 55010).
     POST_CMD_RELOAD_DELAY
                        Seconds to wait after an ACK is received before issuing a
@@ -566,48 +599,93 @@ class UCTSCommander:
                        reflect the new state (default: 0.2 s, configurable via
                        --post-cmd-delay).  Tune upward if reads after commands
                        still show stale values.
+    CMD_INTER_DELAY    Minimum seconds between consecutive UDP commands
+                       (default: 0.05).  Enforced inside _send so that sequences
+                       of sub-commands (e.g. from xml_configuration) do not
+                       arrive at the board faster than it can process them.
     """
     ucts_ip:      str
     ucts_cmd_port: int = 55010
 
-    POST_CMD_RELOAD_DELAY: float = field(default=0.2, repr=False)
+    POST_CMD_RELOAD_DELAY: float = field(default=0.2,  repr=False)
+    CMD_INTER_DELAY:       float = field(default=0.05, repr=False)
+
+    # Reference to the UCTSPoller, set after construction via set_poller().
+    # Used to read live configuration values such as tai_offset.
+    _poller: Optional[Any] = field(default=None, init=False, repr=False)
+
+    # Lazy-initialised per-instance async lock and last-send monotonic timestamp.
+    # Cannot be created at dataclass definition time (no event loop yet).
+    _lock:          Optional[asyncio.Lock] = field(default=None, init=False, repr=False)
+    _last_send_at:  float                  = field(default=0.0,  init=False, repr=False)
+
+    def set_poller(self, poller: Any) -> None:
+        """Attach the UCTSPoller so commands can read live config (e.g. tai_offset)."""
+        self._poller = poller
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Return the per-instance lock, creating it on first use."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     # ── low-level UDP transport ───────────────────────────────────────────────
 
-    def _send_blocking(self, cmd_hex: str) -> bool:
+    async def _send(self, cmd_hex: str) -> bool:
         """
-        Blocking UDP send + echo-back acknowledge.  Always called via _send()
-        which runs it in an executor to avoid blocking the event loop.
+        Send a 64-bit UDP command to TiCkS and await the echo-back ACK.
+
+        Acquires the per-commander lock for the full send→ACK cycle so that
+        concurrent OPC UA method calls cannot interleave commands or ACKs.
+        Enforces a minimum CMD_INTER_DELAY between consecutive sends so that
+        sub-command sequences (e.g. from xml_configuration) do not arrive at
+        the board faster than it can process them.
+
+        Fully async: uses a non-blocking socket with loop.sock_sendto /
+        loop.sock_recvfrom so the event loop is never blocked.
         """
         try:
             cmd_bytes = bytes.fromhex(cmd_hex)
         except ValueError as exc:
             log.error("Bad TiCkS command hex %r: %s", cmd_hex, exc)
             return False
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-                sock.settimeout(_UDP_TIMEOUT)
-                sock.sendto(cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
-                log.debug("TiCkS UDP -> %s:%d  cmd=%s",
-                          self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
-                data, _ = sock.recvfrom(8)
-            ack = data.hex().upper()
-            if ack == cmd_hex.upper():
-                log.info("TiCkS ACK OK  cmd=%s", cmd_hex.upper())
-                return True
-            log.warning("TiCkS ACK mismatch: sent=%s got=%s", cmd_hex.upper(), ack)
-            return False
-        except socket.timeout:
-            log.warning("TiCkS ACK timeout  cmd=%s", cmd_hex.upper())
-            return False
-        except OSError as exc:
-            log.error("TiCkS UDP error: %s", exc)
-            return False
 
-    async def _send(self, cmd_hex: str) -> bool:
-        """Async wrapper: runs _send_blocking() in the thread-pool executor."""
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._send_blocking, cmd_hex)
+        async with self._get_lock():
+            # Enforce minimum inter-command gap
+            elapsed = asyncio.get_event_loop().time() - self._last_send_at
+            gap = self.CMD_INTER_DELAY - elapsed
+            if gap > 0:
+                log.debug("TiCkS inter-command delay %.3f s", gap)
+                await asyncio.sleep(gap)
+
+            loop = asyncio.get_running_loop()
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                    sock.setblocking(False)
+                    await loop.sock_sendto(sock, cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
+                    log.debug("TiCkS UDP -> %s:%d  cmd=%s",
+                              self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
+                    data, _ = await asyncio.wait_for(
+                        loop.sock_recvfrom(sock, 8),
+                        timeout=_UDP_TIMEOUT,
+                    )
+            except asyncio.TimeoutError:
+                log.warning("TiCkS ACK timeout  cmd=%s", cmd_hex.upper())
+                return False
+            except OSError as exc:
+                log.error("TiCkS UDP error: %s", exc)
+                return False
+            finally:
+                # Record completion time whether ACK succeeded or not, so the
+                # next command still waits the full inter-command gap.
+                self._last_send_at = asyncio.get_event_loop().time()
+
+        ack = data.hex().upper()
+        if ack == cmd_hex.upper():
+            log.info("TiCkS ACK OK  cmd=%s", cmd_hex.upper())
+            return True
+        log.warning("TiCkS ACK mismatch: sent=%s got=%s", cmd_hex.upper(), ack)
+        return False
 
     # ── ICD commands ─────────────────────────────────────────────────────────
 
@@ -669,12 +747,20 @@ class UCTSCommander:
           bits 31: 4  28-bit sub-second time in units of 8 ns
           bits 56:32  25-bit TAI seconds
           bits 63:57  0x7F (upper padding)
+
+        The TAI−UTC offset is read from the poller's tai_offset store entry
+        so it can be updated live via SetTaiOffset without restarting.
         """
+        tai_offset = (
+            self._poller.get_tai_offset()
+            if self._poller is not None
+            else _TAI_UTC_DELTA
+        )
         try:
             dt = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            tai_sec = int(dt.timestamp()) + _TAI_UTC_DELTA
+            tai_sec = int(dt.timestamp()) + tai_offset
             sub_ns8 = int((dt.timestamp() % 1.0) * 1e9 / 8)
         except (ValueError, OverflowError) as exc:
             log.error("Invalid UTC timestamp %r: %s", utc_iso, exc)
@@ -839,6 +925,13 @@ class UCTSCommander:
             return int(await commander.schedule_trigger(timestamp_UTC_ISO.strip()))
 
         @uamethod
+        async def SetTaiOffset(parent, offset: int) -> int:
+            log.info("SetTaiOffset: %d", offset)
+            if poller is not None:
+                poller.set_tai_offset(int(offset))
+            return 0
+
+        @uamethod
         async def XMLConfiguration(parent, XML_Message: str) -> int:
             log.info("XMLConfiguration (len=%d)", len(XML_Message))
             idx = XML_Message.find("<")
@@ -919,6 +1012,8 @@ class UCTSCommander:
              [_arg("mac_address",      S)], R),
             (SetUseSpiReception,  "SetUseSpiReception",
              [_arg("enable",           B)], R),
+            (SetTaiOffset,        "SetTaiOffset",
+             [_arg("offset",           I)], R),
         ]
         for fn, name, in_args, out_args in method_defs:
             await parent_node.add_method(ns, name, fn, in_args, out_args)
@@ -998,6 +1093,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--post-cmd-delay", default=0.2, type=float, metavar="SECONDS",
                    help="Seconds to wait after a successful UDP command ACK before "
                         "issuing a forced SNMP reload (default: 0.2)")
+    p.add_argument("--tai-offset", default=_TAI_UTC_DELTA, type=int, metavar="SECONDS",
+                   help="TAI minus UTC offset in seconds (default: %(default)s, "
+                        "last leap second 2016-12-31)")
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     p.add_argument("--log-file", default=None,
@@ -1032,6 +1130,12 @@ async def _async_main() -> None:
     cfg["opcua_path"]       = args.monitoring_path
     cfg["default_lifetime"] = args.variable_lifetime
 
+    # Override tai_offset constant with CLI value if provided
+    for c in cfg["constants"]:
+        if c["opcua_name"] == "tai_offset":
+            c["value"] = args.tai_offset
+            break
+
     if args.dump_device_config:
         import json
         print(json.dumps(cfg, indent=2))
@@ -1043,6 +1147,7 @@ async def _async_main() -> None:
         ucts_cmd_port=args.ucts_cmd_port,
         POST_CMD_RELOAD_DELAY=args.post_cmd_delay,
     )
+    commander.set_poller(poller)
 
     opcua_server = UCTSOPCUAServer(
         endpoint=args.opcua_endpoint,

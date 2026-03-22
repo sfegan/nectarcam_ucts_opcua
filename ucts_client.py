@@ -32,6 +32,7 @@ Interactive commands
   setport <port>        Call SetDstPort
   setmac <mac>          Call SetDstMacAddress
   setspi <0|1>          Call SetUseSpiReception
+  settai <seconds>      Call SetTaiOffset (e.g. settai 37)
   browse                Print the UCTS node tree
   help                  Show this help
   quit / exit           Disconnect and exit
@@ -70,7 +71,7 @@ _MONITORING_VARS = [
     "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort", "EventCount",
     "FirmwareVersion", "PortLinkStatus", "State", "Status", "Temperature",
     "Throttle", "TimeTAI", "TimeTAIString", "UpTime", "UpTimeMilliseconds",
-    "WrpcSwVersion", "SoftwareVersion",
+    "WrpcSwVersion", "SoftwareVersion", "tai_offset",
     # Built-in server variables
     "snmp_host", "snmp_port", "snmp_polling_timestamp", "snmp_polling_age",
     "snmp_polling_interval", "snmp_polling_success_count",
@@ -80,7 +81,7 @@ _MONITORING_VARS = [
 _METHODS = [
     "Configure", "Start", "Reset", "ScheduleTrigger",
     "XMLConfiguration", "SetDstIpAddress", "SetDstPort",
-    "SetDstMacAddress", "SetUseSpiReception",
+    "SetDstMacAddress", "SetUseSpiReception", "SetTaiOffset",
 ]
 
 _HELP = """
@@ -100,6 +101,7 @@ Commands:
   setport <port>           Call SetDstPort
   setmac <mac>             Call SetDstMacAddress (e.g. setmac 68:05:ca:3a:8f:28)
   setspi <0|1>             Call SetUseSpiReception (1=enable, 0=disable)
+  settai <seconds>         Call SetTaiOffset (e.g. settai 37)
   browse                   Browse and print the UCTS node tree
   help                     Show this help
   quit / exit              Disconnect and exit
@@ -274,6 +276,11 @@ class UCTSClient:
                                      ua.Variant(enable, ua.VariantType.Boolean))
         print(f"  SetUseSpiReception({enable}) -> rc={rc}")
 
+    async def cmd_set_tai_offset(self, offset: int) -> None:
+        rc = await self._call_method("SetTaiOffset",
+                                     ua.Variant(offset, ua.VariantType.Int32))
+        print(f"  SetTaiOffset({offset}) -> rc={rc}")
+
     # ── browse ────────────────────────────────────────────────────────────────
 
     async def cmd_browse(self) -> None:
@@ -381,6 +388,15 @@ async def _dispatch(client: UCTSClient, line: str) -> bool:
             print("Usage: setspi <0|1>")
         else:
             await client.cmd_set_use_spi_reception(parts[1].strip() in ("1", "true", "yes"))
+
+    elif cmd == "settai":
+        if len(parts) < 2:
+            print("Usage: settai <seconds>  (e.g. settai 37)")
+        else:
+            try:
+                await client.cmd_set_tai_offset(int(parts[1]))
+            except ValueError:
+                print("TAI offset must be an integer")
 
     else:
         print(f"Unknown command: {cmd!r}  (type 'help' for commands)")
