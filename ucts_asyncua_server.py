@@ -6,21 +6,13 @@ OPC UA server for the UCTS (Universal Clock and Time Stamping) controller.
 Three-class design, each with a single responsibility:
 
   UCTSPoller(SNMPPoller)
-      Pure SNMP monitoring.  Overrides the three SNMPPoller hooks:
-        build_variable_specs()   - local (underscore-prefixed) OIDs are already
-                                   excluded by the base class; derived variables
-                                   (Status, DstMacAddr, State, FirmwareVersion,
-                                   Temperature) are declared as constants with
-                                   value=None so the base creates them with
-                                   BadWaitingForInitialData.
-        write_variables()        - computes derived store entries from local OIDs
-                                   when their sources are Good, or delegates
-                                   staleness to self._apply_staleness() when they
-                                   are not.  Applies in-place transformations to
-                                   PortLinkStatus and TimeTAIString.  Calls
-                                   super().write_variables() to perform the actual
-                                   OPC UA writes.
-        on_address_space_ready() - nothing extra; pure monitoring only.
+      Pure SNMP monitoring.  Overrides write_variables() to:
+        - compute derived store entries (DstMacAddr, Status, State,
+          FirmwareVersion, UpTimeMilliseconds) from local OIDs when their
+          sources are Good, or delegate to self._apply_staleness() when not.
+        - apply in-place transformations to PortLinkStatus (INTEGER → string)
+          and TimeTAIString (ISO 8601 separator normalisation).
+        - call super().write_variables() to perform the actual OPC UA writes.
 
   UCTSCommander
       All UDP command logic for TiCkS.  Knows nothing about OPC UA nodes or
@@ -593,12 +585,12 @@ class UCTSCommander:
             log.error("Bad TiCkS command hex %r: %s", cmd_hex, exc)
             return False
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            sock.settimeout(_UDP_TIMEOUT)
-            sock.sendto(cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
-            log.debug("TiCkS UDP -> %s:%d  cmd=%s",
-                      self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
-            data, _ = sock.recvfrom(8)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.settimeout(_UDP_TIMEOUT)
+                sock.sendto(cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
+                log.debug("TiCkS UDP -> %s:%d  cmd=%s",
+                          self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
+                data, _ = sock.recvfrom(8)
             ack = data.hex().upper()
             if ack == cmd_hex.upper():
                 log.info("TiCkS ACK OK  cmd=%s", cmd_hex.upper())
@@ -611,8 +603,6 @@ class UCTSCommander:
         except OSError as exc:
             log.error("TiCkS UDP error: %s", exc)
             return False
-        finally:
-            sock.close()
 
     async def _send(self, cmd_hex: str) -> bool:
         """Async wrapper: runs _send_blocking() in the thread-pool executor."""
@@ -630,7 +620,16 @@ class UCTSCommander:
         return 0 if await self._send("FFFFFFFFFFFFFFF0") else 1
 
     async def set_dst_mac(self, mac: str) -> int:
-        """Function code 0x1 -- configure destination MAC address."""
+        """
+        Function code 0x1 -- set destination MAC address.
+
+        Bit layout of the 64-bit word:
+          bits 63:52  0xFFF  (upper padding)
+          bits 51: 4  48-bit MAC address (big-endian octet order, no separators)
+          bits  3: 0  0x1    (function code)
+
+        Colons, hyphens, and spaces are stripped before encoding.
+        """
         clean = mac.translate(str.maketrans("", "", ":- "))
         if len(clean) != 12:
             log.error("Invalid MAC %r", mac)
