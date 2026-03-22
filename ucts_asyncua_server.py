@@ -111,7 +111,9 @@ import socket
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+import re
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 # ── bridge imports ────────────────────────────────────────────────────────────
@@ -321,10 +323,8 @@ def _merge_mac(msb: bytes, lsb: bytes) -> str:
     The LSB field is documented as "16 lsb" (2 bytes) but the device pads it
     to 4 bytes (e.g. b'\\x8f\\x28\\x00\\x00'); only the first 2 bytes are used.
 
-    Format follows C++ get_ucts_dst_mac_addr(): lowercase hex, no zero-padding,
-    colon-separated — e.g. "68:5:ca:3a:8f:28".  Note that zero-padding is not
-    applied (matching the C++ %x format), so single-nibble bytes appear without
-    a leading zero.
+    Each octet is zero-padded to two hex digits and uppercased,
+    colon-separated — e.g. "68:05:CA:3A:8F:28".
     """
     b_msb = (msb + b"\x00" * 4)[:4]
     b_lsb = (lsb + b"\x00" * 2)[:2]
@@ -496,10 +496,9 @@ class UCTSPoller(SNMPPoller):
                     if isinstance(td, str):
                         # Already converted to string — parse it back
                         # Format is H:MM:SS.ffffff or H:MM:SS
-                        import datetime as _dt
                         parts = td.split(":")
                         h, m, s = int(parts[0]), int(parts[1]), float(parts[2])
-                        td = _dt.timedelta(hours=h, minutes=m, seconds=s)
+                        td = timedelta(hours=h, minutes=m, seconds=s)
                     ms = td.total_seconds() * 1000.0
                     uptime_ms_entry.data_value = _good_dv(ms, "Double")
                     uptime_ms_entry.timestamp  = now
@@ -703,8 +702,6 @@ class UCTSCommander:
 
         Returns 0 on full success, 1 if any command failed or MAC is absent.
         """
-        import xml.etree.ElementTree as ET
-
         try:
             root = ET.fromstring(xml_body)
         except ET.ParseError as exc:
@@ -793,6 +790,14 @@ class UCTSCommander:
             # Set destination MAC (func 0x1) and destination IP (func 0x4) on the board.
             # UCTS_IP_ADDRESS (the board's own IP) is accepted for ICD compatibility but
             # ignored -- the board IP is fixed at startup via --ucts-ip.
+            ucts_ip_arg = UCTS_IP_ADDRESS.strip()
+            if ucts_ip_arg and ucts_ip_arg != "0.0.0.0" \
+                    and ucts_ip_arg != commander.ucts_ip:
+                log.warning(
+                    "Configure: UCTS_IP_ADDRESS %r differs from server --ucts-ip %r "
+                    "-- argument ignored; board IP is fixed at startup",
+                    ucts_ip_arg, commander.ucts_ip,
+                )
             rc  = await commander.set_dst_mac(PC_MAC_ADDRESS.strip())
             rc |= await commander.set_dst_ip(PC_IP_ADDRESS.strip())
             if rc == 0 and poller is not None:
@@ -989,7 +994,9 @@ def _parse_args() -> argparse.Namespace:
                    help="Optional rotating log file path")
     p.add_argument("--dump-device-config", action="store_true",
                    help=(
-                       "Print the fully-resolved device configuration as JSON to stdout "                       "(incorporating all CLI overrides) and exit immediately. "                       "Useful for generating a --device-config file."
+                       "Print the fully-resolved device configuration as JSON "
+                       "to stdout (incorporating all CLI overrides) and exit "
+                       "immediately. Useful for generating a --device-config file."
                    ))
     return p.parse_args()
 
