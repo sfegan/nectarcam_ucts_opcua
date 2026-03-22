@@ -89,6 +89,7 @@ Usage
   --snmp-retries N      SNMP retries after first attempt (default: 1)
   --monitoring-path S   OPC UA path for monitoring node (default: Monitoring)
   --variable-lifetime F Variable lifetime in seconds    (default: 120.0)
+  --post-cmd-delay F    Delay before SNMP reload after command ACK (default: 0.2)
   --opcua-endpoint URL  OPC UA endpoint URL          (default: opc.tcp://0.0.0.0:4840/ucts/)
   --opcua-namespace URI OPC UA namespace URI
   --opcua-user U:P      Enable username/password auth
@@ -560,13 +561,14 @@ class UCTSCommander:
     POST_CMD_RELOAD_DELAY
                        Seconds to wait after an ACK is received before issuing a
                        force_reload() so the device's SNMP agent has time to
-                       reflect the new state.  Tune upward if reads after commands
+                       reflect the new state (default: 0.2 s, configurable via
+                       --post-cmd-delay).  Tune upward if reads after commands
                        still show stale values.
     """
     ucts_ip:      str
     ucts_cmd_port: int = 55010
 
-    POST_CMD_RELOAD_DELAY: float = field(default=0.05, init=False, repr=False)
+    POST_CMD_RELOAD_DELAY: float = field(default=0.2, repr=False)
 
     # ── low-level UDP transport ───────────────────────────────────────────────
 
@@ -617,13 +619,23 @@ class UCTSCommander:
         """0xFFFFFFFFFFFFFFF0 -- start TDC, counters, external trigger."""
         return 0 if await self._send("FFFFFFFFFFFFFFF0") else 1
 
-    async def set_mac(self, mac: str) -> int:
+    async def set_dst_mac(self, mac: str) -> int:
         """Function code 0x1 -- configure destination MAC address."""
         clean = mac.translate(str.maketrans("", "", ":- "))
         if len(clean) != 12:
             log.error("Invalid MAC %r", mac)
             return 1
         return 0 if await self._send("FFF" + clean + "1") else 1
+
+    async def set_use_spi_reception(self, enable: bool) -> int:
+        """
+        Function codes 0x15 / 0x05 -- enable or disable SPI trigger reception.
+
+        enable=True  → 0xFFFFFFFFFFFFFF15  (use SPI)
+        enable=False → 0xFFFFFFFFFFFFFF05   (ignore SPI)
+        """
+        cmd = "FFFFFFFFFFFFFF15" if enable else "FFFFFFFFFFFFFF05"
+        return 0 if await self._send(cmd) else 1
 
     async def set_dst_ip(self, dst_ip: str) -> int:
         """Function code 0x4 -- set destination IP address."""
@@ -673,7 +685,7 @@ class UCTSCommander:
         import re
         rc = 0
         m = re.search(r"<MACAddress>\s*([^<]+)\s*</MACAddress>",     xml_body, re.I)
-        if m: rc |= await self.set_mac(m.group(1).strip())
+        if m: rc |= await self.set_dst_mac(m.group(1).strip())
         m = re.search(r"<DstIpAddress>\s*([^<]+)\s*</DstIpAddress>", xml_body, re.I)
         if m: rc |= await self.set_dst_ip(m.group(1).strip())
         m = re.search(r"<DstPort>\s*(\d+)\s*</DstPort>",             xml_body, re.I)
@@ -681,8 +693,7 @@ class UCTSCommander:
         m = re.search(r"<SPI>\s*([^<]+)\s*</SPI>",                   xml_body, re.I)
         if m:
             enable = m.group(1).strip().lower() in ("1", "true", "yes")
-            rc |= (0 if await self._send("FFFFFFFFFFFFFF15" if enable
-                                   else "FFFFFFFFFFFFFF05") else 1)
+            rc |= await self.set_use_spi_reception(enable)
         return rc
 
     # ── OPC UA method registration ────────────────────────────────────────────
@@ -717,7 +728,7 @@ class UCTSCommander:
             # Set destination MAC (func 0x1) and destination IP (func 0x4) on the board.
             # UCTS_IP_ADDRESS (the board's own IP) is accepted for ICD compatibility but
             # ignored -- the board IP is fixed at startup via --ucts-ip.
-            rc  = await commander.set_mac(PC_MAC_ADDRESS.strip())
+            rc  = await commander.set_dst_mac(PC_MAC_ADDRESS.strip())
             rc |= await commander.set_dst_ip(PC_IP_ADDRESS.strip())
             if rc == 0 and poller is not None:
                 await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
@@ -779,6 +790,24 @@ class UCTSCommander:
                 await poller.force_reload()
             return int(rc)
 
+        @uamethod
+        async def SetDstMacAddress(parent, mac_address: str) -> int:
+            log.info("SetDstMacAddress: %s", mac_address)
+            rc = await commander.set_dst_mac(mac_address.strip())
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
+
+        @uamethod
+        async def SetUseSpiReception(parent, enable: bool) -> int:
+            log.info("SetUseSpiReception: %s", enable)
+            rc = await commander.set_use_spi_reception(bool(enable))
+            if rc == 0 and poller is not None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                await poller.force_reload()
+            return int(rc)
+
         def _arg(name: str, type_node_id: ua.NodeId) -> ua.Argument:
             a = ua.Argument()
             a.Name = name
@@ -792,21 +821,27 @@ class UCTSCommander:
         I = ua.NodeId(ua.ObjectIds.Int32)
         R = [_arg("Result", I)]
 
+        B = ua.NodeId(ua.ObjectIds.Boolean)
+
         method_defs = [
-            (Configure,        "Configure",
+            (Configure,           "Configure",
              [_arg("PC_IP_ADDRESS",   S),
               _arg("UCTS_IP_ADDRESS", S),
               _arg("PC_MAC_ADDRESS",  S)], R),
-            (Start,            "Start",            [], R),
-            (Reset,            "Reset",            [], R),
-            (ScheduleTrigger,  "ScheduleTrigger",
+            (Start,               "Start",            [], R),
+            (Reset,               "Reset",            [], R),
+            (ScheduleTrigger,     "ScheduleTrigger",
              [_arg("timestamp_UTC_ISO", S)], R),
-            (XMLConfiguration, "XMLConfiguration",
+            (XMLConfiguration,    "XMLConfiguration",
              [_arg("XML_Message",      S)], R),
-            (SetDstIpAddress,  "SetDstIpAddress",
+            (SetDstIpAddress,     "SetDstIpAddress",
              [_arg("ip_address",       S)], R),
-            (SetDstPort,       "SetDstPort",
+            (SetDstPort,          "SetDstPort",
              [_arg("port",             I)], R),
+            (SetDstMacAddress,    "SetDstMacAddress",
+             [_arg("mac_address",      S)], R),
+            (SetUseSpiReception,  "SetUseSpiReception",
+             [_arg("enable",           B)], R),
         ]
         for fn, name, in_args, out_args in method_defs:
             await parent_node.add_method(ns, name, fn, in_args, out_args)
@@ -883,6 +918,9 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--variable-lifetime", default=120.0, type=float, metavar="SECONDS",
                    help="Default lifetime in seconds for all polled variables "
                         "before they expire to BadNoCommunication (0 = never expire)")
+    p.add_argument("--post-cmd-delay", default=0.2, type=float, metavar="SECONDS",
+                   help="Seconds to wait after a successful UDP command ACK before "
+                        "issuing a forced SNMP reload (default: 0.2)")
     p.add_argument("--log-level", default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     p.add_argument("--log-file", default=None,
@@ -924,6 +962,7 @@ async def _async_main() -> None:
     commander = UCTSCommander(
         ucts_ip=args.ucts_ip,
         ucts_cmd_port=args.ucts_cmd_port,
+        POST_CMD_RELOAD_DELAY=args.post_cmd_delay,
     )
 
     opcua_server = UCTSOPCUAServer(
