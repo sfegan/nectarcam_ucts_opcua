@@ -1,6 +1,6 @@
 # NectarCAM UCTS OPC UA Server
 
-OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes nine ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board. See the [TiCkS documentation](https://mdpunch.pages.in2p3.fr/ticks/index.html) for full hardware and firmware details.
+OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** controller and **TiCkS** timing board. Monitors the device via SNMP and exposes ten ICD-defined command methods that translate OPC UA calls into UDP commands sent to the TiCkS board. See the [TiCkS documentation](https://mdpunch.pages.in2p3.fr/ticks/index.html) for full hardware and firmware details.
 
 ## Dependencies
 
@@ -37,6 +37,7 @@ Full options:
 | `--monitoring-path S` | `Monitoring` | OPC UA path for monitoring node |
 | `--variable-lifetime F` | `120.0` | Variable lifetime (seconds) |
 | `--post-cmd-delay F` | `0.2` | Settling delay (seconds) before SNMP reload after a command ACK |
+| `--tai-offset N` | `37` | TAI minus UTC offset in seconds (last leap second 2016-12-31) |
 | `--opcua-endpoint URL` | `opc.tcp://0.0.0.0:4840/ucts/` | OPC UA endpoint |
 | `--opcua-namespace URI` | — | OPC UA namespace URI |
 | `--opcua-user U:P` | — | Enable username/password authentication |
@@ -68,6 +69,7 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `UpTimeMilliseconds` | Double | Board uptime in milliseconds |
 | `WrpcSwVersion` | String | White Rabbit PTP core software version |
 | `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
+| `tai_offset` | Int32 | TAI minus UTC offset in seconds as configured in this server (set via `--tai-offset` or `SetTaiOffset`). Reflects the server's working assumption and is not an authoritative statement of the current IERS value |
 | `snmp_host` | String | IP address of the SNMP device |
 | `snmp_port` | UInt16 | SNMP UDP port |
 | `snmp_polling_timestamp` | DateTime | Timestamp of the most recent poll |
@@ -83,7 +85,7 @@ Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, an
 
 All methods are under `Objects/UCTS/` and return `Int32`: `0` = success, non-zero = failure. UDP commands include a 2-second echo-back timeout.
 
-Methods that change hardware state (`Start`, `Reset`, `Configure`, `XMLConfiguration`, `SetDstIpAddress`, `SetDstPort`, `SetDstMacAddress`, `SetUseSpiReception`) automatically trigger a full SNMP poll after the ACK is received (with a short configurable settling delay, default 200 ms, controlled by `--post-cmd-delay`) so that monitoring variables reflect the new state without waiting for the next scheduled poll interval. `ScheduleTrigger` does not trigger a reload since it schedules a future event rather than changing immediately-readable state.
+Methods that change hardware state (`Start`, `Reset`, `Configure`, `XMLConfiguration`, `SetDstIpAddress`, `SetDstPort`, `SetDstMacAddress`, `SetUseSpiReception`) automatically trigger a full SNMP poll after the ACK is received (with a short configurable settling delay, default 200 ms, controlled by `--post-cmd-delay`) so that monitoring variables reflect the new state without waiting for the next scheduled poll interval. `ScheduleTrigger` and `SetTaiOffset` do not trigger a reload.
 
 ### `Start() → Int32`
 Enable the TDC, reset event/busy counters, enable external trigger reception. On success, triggers an immediate SNMP reload.
@@ -95,7 +97,7 @@ Stop the TDC, reset all event and busy counters. On success, triggers an immedia
 Set the destination IP and MAC address for timestamp delivery and update the UCTS board's own IP. On success, triggers an immediate SNMP reload.
 
 ### `ScheduleTrigger(timestamp_UTC_ISO: String) → Int32`
-Schedule a software trigger at a UTC timestamp (ISO 8601, e.g. `2025-06-15T14:30:45.123456`). Converted to TAI (hardcoded 37 s offset, valid since 2017) and encoded into a 64-bit command word at 8 ns resolution. Does not trigger an SNMP reload.
+Schedule a software trigger at a UTC timestamp (ISO 8601, e.g. `2025-06-15T14:30:45.123456`). Converted internally to TAI using the server's current `tai_offset` value, and encoded into a 64-bit command word at 8 ns resolution. Does not trigger an SNMP reload.
 
 ### `SetDstIpAddress(ip_address: String) → Int32`
 Set the destination IP address for timestamp delivery. On success, triggers an immediate SNMP reload.
@@ -108,6 +110,9 @@ Set the destination MAC address for timestamp delivery (e.g. `68:05:ca:3a:8f:28`
 
 ### `SetUseSpiReception(enable: Boolean) → Int32`
 Enable (`True`) or disable (`False`) SPI trigger reception on the TiCkS board. On success, triggers an immediate SNMP reload.
+
+### `SetTaiOffset(offset: Int32) → Int32`
+Update the TAI minus UTC offset used by `ScheduleTrigger` without restarting the server. The new value is reflected immediately in the `tai_offset` monitoring variable. The current offset can also be set at startup via `--tai-offset`. Does not trigger an SNMP reload.
 
 ### `XMLConfiguration(XML_Message: String) → Int32`
 Apply configuration via an XML message. The message must contain a `<UCTS>` root element with named child elements carrying their values in a `value` attribute, matching the C++ MOS server schema:
@@ -144,7 +149,37 @@ python ucts_asyncua_server.py --ucts-ip localhost --ucts-snmp-port 1161
 python ucts_client.py --endpoint opc.tcp://localhost:4840/ucts/
 ```
 
-Available client commands:
+### Emulator options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--snmp-port N` | `1161` | SNMP UDP port (use `161` as root) |
+| `--cmd-port N` | `55010` | TiCkS command UDP port |
+| `--bind HOST` | `0.0.0.0` | Interface to bind (binds both IPv4 and IPv6 on wildcard) |
+| `--log-level LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
+
+### Emulator interactive commands
+
+| Command | Description |
+|---------|-------------|
+| `show` | Print all current variable values |
+| `set Temperature <val>` | Set temperature in °C (e.g. `25.6`) |
+| `set EventCount <val>` | Set event counter |
+| `set BusyCount <val>` | Set busy counter |
+| `set Throttle <val>` | Set throttle (decimal or `0x` hex) |
+| `set DstIpAddr <x.x.x.x>` | Set destination IP |
+| `set DstPort <val>` | Set destination port |
+| `set WrpcSwVersion <str>` | Set WR software version string |
+| `set FirmwareVersion <n>` | Set firmware version integer |
+| `set PortLinkStatus <n>` | Set port link status (0=na, 1=down, 2=up) |
+| `state <0\|1>` | Set TiCkS state (0=Online/Standby, 1=Running) |
+| `status <hex_or_dec>` | Set raw status word directly |
+| `reset` | Apply Reset command (state=Online, counters=0) |
+| `getready` | Apply GetReady command (state=Running) |
+| `help` | Show full command help |
+| `quit` / `exit` | Shut down |
+
+### Client commands
 
 | Command | Description |
 |---------|-------------|
@@ -160,5 +195,6 @@ Available client commands:
 | `setport <port>` | Call `SetDstPort` |
 | `setmac <mac>` | Call `SetDstMacAddress` (e.g. `setmac 68:05:ca:3a:8f:28`) |
 | `setspi <0\|1>` | Call `SetUseSpiReception` |
+| `settai <seconds>` | Call `SetTaiOffset` (e.g. `settai 37`) |
 | `browse` | Print the UCTS node tree |
 | `help` | Show full command help |
