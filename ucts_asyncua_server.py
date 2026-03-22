@@ -678,22 +678,87 @@ class UCTSCommander:
 
     async def xml_configuration(self, xml_body: str) -> int:
         """
-        Parse XML body for known tags and apply the corresponding commands.
-        Supported tags: <MACAddress>, <DstIpAddress>, <DstPort>, <SPI>.
-        Returns 0 on full success, 1 if any command failed.
+        Parse XML body and send the corresponding UDP commands to TiCkS.
+
+        Matches the wire behaviour of the C++ XMLConfiguration / Configure /
+        SetDstIpAddr chain.  The XML schema uses a <UCTS> root with named child
+        elements carrying their values in a ``value`` attribute, e.g.:
+
+            <UCTS>
+              <OPCUA_server_IP_Address value="192.168.1.10"/>
+              <UCTS_IP_ADDRESS         value="10.10.3.99"/>
+              <CDTS_MAC_Address        value="68:05:ca:3a:8f:28"/>
+              <DST_IP_ADDRESS          value="10.10.3.250"/>
+            </UCTS>
+
+        C++ nodes and their disposition:
+          CDTS_MAC_Address        → set_dst_mac()           (required)
+          DST_IP_ADDRESS          → set_dst_ip()            (optional)
+          OPCUA_server_IP_Address → ignored (MOS-only concept)
+          UCTS_IP_ADDRESS         → ignored (fixed at server startup)
+
+        Python extensions (no C++ equivalent):
+          <DstPort value="55000"/> → set_dst_port()         (optional)
+          <SPI     value="1"/>     → set_use_spi_reception() (optional)
+
+        Returns 0 on full success, 1 if any command failed or MAC is absent.
         """
-        import re
+        import xml.etree.ElementTree as ET
+
+        try:
+            root = ET.fromstring(xml_body)
+        except ET.ParseError as exc:
+            log.error("XMLConfiguration: failed to parse XML: %s", exc)
+            return 1
+
+        # Normalise: accept either <UCTS>...</UCTS> as root or as a child
+        if root.tag != "UCTS":
+            ucts = root.find("UCTS")
+            if ucts is None:
+                log.error("XMLConfiguration: no <UCTS> node found")
+                return 1
+        else:
+            ucts = root
+
+        def _attr(tag: str) -> Optional[str]:
+            """Return the ``value`` attribute of the first matching child, or None."""
+            node = ucts.find(tag)
+            if node is None:
+                return None
+            val = node.get("value")
+            if val is not None:
+                return val.strip()
+            # Fallback: accept text content for forward-compatibility
+            return (node.text or "").strip() or None
+
         rc = 0
-        m = re.search(r"<MACAddress>\s*([^<]+)\s*</MACAddress>",     xml_body, re.I)
-        if m: rc |= await self.set_dst_mac(m.group(1).strip())
-        m = re.search(r"<DstIpAddress>\s*([^<]+)\s*</DstIpAddress>", xml_body, re.I)
-        if m: rc |= await self.set_dst_ip(m.group(1).strip())
-        m = re.search(r"<DstPort>\s*(\d+)\s*</DstPort>",             xml_body, re.I)
-        if m: rc |= await self.set_dst_port(int(m.group(1)))
-        m = re.search(r"<SPI>\s*([^<]+)\s*</SPI>",                   xml_body, re.I)
-        if m:
-            enable = m.group(1).strip().lower() in ("1", "true", "yes")
+
+        # MAC address — required (mirrors C++ Configure mandatory argument)
+        mac = _attr("CDTS_MAC_Address")
+        if mac is None:
+            log.error("XMLConfiguration: CDTS_MAC_Address not found in XML")
+            return 1
+        rc |= await self.set_dst_mac(mac)
+
+        # Destination IP — optional (C++ skips SetDstIpAddr when absent)
+        dst_ip = _attr("DST_IP_ADDRESS")
+        if dst_ip:
+            rc |= await self.set_dst_ip(dst_ip)
+
+        # Python extensions — optional
+        dst_port = _attr("DstPort")
+        if dst_port:
+            try:
+                rc |= await self.set_dst_port(int(dst_port))
+            except ValueError:
+                log.error("XMLConfiguration: invalid DstPort value %r", dst_port)
+                rc = 1
+
+        spi = _attr("SPI")
+        if spi is not None:
+            enable = spi.lower() in ("1", "true", "yes")
             rc |= await self.set_use_spi_reception(enable)
+
         return rc
 
     # ── OPC UA method registration ────────────────────────────────────────────
@@ -764,10 +829,7 @@ class UCTSCommander:
             idx = XML_Message.find("<")
             xml_body = XML_Message[idx:] if idx >= 0 else XML_Message
             rc = await commander.xml_configuration(xml_body)
-            if rc == 0:
-                log.info("XMLConfiguration: issuing Reset")
-                rc |= await commander.reset()
-            if poller is not None:
+            if rc == 0 and poller is not None:
                 await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
                 await poller.force_reload()
             return int(rc)
