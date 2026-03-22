@@ -30,6 +30,8 @@ Interactive commands
   xml <xml_string>      Call XMLConfiguration
   setip <ip>            Call SetDstIpAddress
   setport <port>        Call SetDstPort
+  setmac <mac>          Call SetDstMacAddress
+  setspi <0|1>          Call SetUseSpiReception
   browse                Print the UCTS node tree
   help                  Show this help
   quit / exit           Disconnect and exit
@@ -78,6 +80,7 @@ _MONITORING_VARS = [
 _METHODS = [
     "Configure", "Start", "Reset", "ScheduleTrigger",
     "XMLConfiguration", "SetDstIpAddress", "SetDstPort",
+    "SetDstMacAddress", "SetUseSpiReception",
 ]
 
 _HELP = """
@@ -95,6 +98,8 @@ Commands:
   xml <xml_string>         Call XMLConfiguration
   setip <ip>               Call SetDstIpAddress
   setport <port>           Call SetDstPort
+  setmac <mac>             Call SetDstMacAddress (e.g. setmac 68:05:ca:3a:8f:28)
+  setspi <0|1>             Call SetUseSpiReception (1=enable, 0=disable)
   browse                   Browse and print the UCTS node tree
   help                     Show this help
   quit / exit              Disconnect and exit
@@ -260,6 +265,15 @@ class UCTSClient:
         rc = await self._call_method("SetDstPort", ua.Variant(port, ua.VariantType.Int32))
         print(f"  SetDstPort({port}) -> rc={rc}")
 
+    async def cmd_set_dst_mac(self, mac: str) -> None:
+        rc = await self._call_method("SetDstMacAddress", mac)
+        print(f"  SetDstMacAddress({mac!r}) -> rc={rc}")
+
+    async def cmd_set_use_spi_reception(self, enable: bool) -> None:
+        rc = await self._call_method("SetUseSpiReception",
+                                     ua.Variant(enable, ua.VariantType.Boolean))
+        print(f"  SetUseSpiReception({enable}) -> rc={rc}")
+
     # ── browse ────────────────────────────────────────────────────────────────
 
     async def cmd_browse(self) -> None:
@@ -355,6 +369,18 @@ async def _dispatch(client: UCTSClient, line: str) -> bool:
                 await client.cmd_set_dst_port(int(parts[1]))
             except ValueError:
                 print("Port must be an integer")
+
+    elif cmd == "setmac":
+        if len(parts) < 2:
+            print("Usage: setmac <mac>  (e.g. setmac 68:05:ca:3a:8f:28)")
+        else:
+            await client.cmd_set_dst_mac(parts[1])
+
+    elif cmd == "setspi":
+        if len(parts) < 2:
+            print("Usage: setspi <0|1>")
+        else:
+            await client.cmd_set_use_spi_reception(parts[1].strip() in ("1", "true", "yes"))
 
     else:
         print(f"Unknown command: {cmd!r}  (type 'help' for commands)")
