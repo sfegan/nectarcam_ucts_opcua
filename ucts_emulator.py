@@ -822,6 +822,17 @@ def _apply_set(var: str, val: str) -> None:
         print(f"Invalid value {val!r}: {exc}")
 
 
+def _blocking_input(prompt: str) -> Optional[str]:
+    """
+    Read one line from stdin.  Returns None on EOF or KeyboardInterrupt so
+    the caller can exit cleanly without the executor thread hanging forever.
+    """
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
 async def _terminal_loop(stop_event: asyncio.Event) -> None:
     loop = asyncio.get_running_loop()
     print("\nUCTS Emulator ready. Type 'help' for commands, 'quit' to exit.\n")
@@ -829,8 +840,11 @@ async def _terminal_loop(stop_event: asyncio.Event) -> None:
     print()
     while not stop_event.is_set():
         try:
-            line = await loop.run_in_executor(None, lambda: input("ucts> "))
-        except EOFError:
+            line = await loop.run_in_executor(None, _blocking_input, "ucts> ")
+        except asyncio.CancelledError:
+            break
+        if line is None:           # EOF or KeyboardInterrupt inside the thread
+            stop_event.set()       # always set, so _async_main shuts down too
             break
         if not _apply_terminal_command(line):
             stop_event.set()
@@ -884,6 +898,16 @@ async def _async_main() -> None:
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
+    # Treat SIGHUP (terminal closed / SSH session dropped) as a clean shutdown
+    # signal, the same way we treat EOF on stdin.  Without this, a closed
+    # terminal leaves the process running with a broken stdin — input() then
+    # raises EOFError on every call, spinning the terminal loop at full speed.
+    import signal as _signal
+    try:
+        loop.add_signal_handler(_signal.SIGHUP, stop_event.set)
+    except (AttributeError, NotImplementedError):
+        pass  # Windows — no SIGHUP
+
     # Bind SNMP on both IPv4 and IPv6 so that clients using either
     # "localhost" -> 127.0.0.1 or "localhost" -> ::1 (macOS default) both work.
     snmp_transports = []
@@ -924,10 +948,24 @@ async def _async_main() -> None:
 
 
 def main() -> None:
+    import concurrent.futures
+    # Use an explicit ThreadPoolExecutor with a single worker so we can call
+    # shutdown(cancel_futures=True) on exit.  Without this, asyncio's default
+    # executor keeps waiting 300 s for the blocked input() thread to return.
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1,
+                                                     thread_name_prefix="cli")
+    loop = asyncio.new_event_loop()
+    loop.set_default_executor(executor)
+    asyncio.set_event_loop(loop)
     try:
-        asyncio.run(_async_main())
+        loop.run_until_complete(_async_main())
     except KeyboardInterrupt:
         print("\nInterrupted")
+    finally:
+        # Cancel any futures still pending in the executor (e.g. a blocked
+        # input() call) so the thread is not left dangling.
+        executor.shutdown(wait=False, cancel_futures=True)
+        loop.close()
 
 
 if __name__ == "__main__":

@@ -158,6 +158,7 @@ _UCTS_CONFIG: dict = {
     "description":   "UCTS SNMP Device",
     "opcua_path":    "Monitoring",
     "poll_interval": 1,
+    "oids_per_get":  1,
     "oids": [
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
@@ -170,24 +171,28 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "DstIpAddr",
             "opcua_type":  "String",
             "description": "Destination IP address of UCTS timestamps",
+            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
             "opcua_name":  "_DstMacAddr_32MSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 32 MSB of destination MAC address",
+            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
             "opcua_name":  "_DstMacAddr_16LSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 16 LSB of destination MAC address",
+            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
             "opcua_name":  "DstPort",
             "opcua_type":  "Int32",
             "description": "Destination port of UCTS timestamps",
+            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.7.1",
@@ -208,12 +213,14 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "Throttle",
             "opcua_type":  "Int64",
             "description": "Throttle parameter of UCTS TiCkS",
+            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.7.1.0",
             "opcua_name":  "PortLinkStatus",
             "opcua_type":  "String",
             "description": "Port link status",
+            "poll_every":  60,
         },
         {
             # wrpcTemperatureValue — MIB SYNTAX is DisplayString, device sends
@@ -224,30 +231,35 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "Temperature",
             "opcua_type":  "Float",
             "description": "Temperature of the TiCkS PCB (degrees C)",
+            "poll_every":  10,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
             "opcua_name":  "TimeTAI",
             "opcua_type":  "Int64",
             "description": "TAI time",
+            "poll_every":  10,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.2.0",
             "opcua_name":  "TimeTAIString",
             "opcua_type":  "String",
             "description": "TAI time string (ISO 8601)",
+            "poll_every":  10,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
             "opcua_type":  "String",
             "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')",
+            "poll_every":  10,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.1.2.0",
             "opcua_name":  "WrpcSwVersion",
             "opcua_type":  "String",
             "description": "Version of the wrpc software",
+            "poll_every":  60,
         },
     ],
     "constants": [
@@ -439,9 +451,9 @@ class UCTSPoller(SNMPPoller):
         setting, consistently with how polled OIDs are handled.
 
         In-place transformations (PortLinkStatus enum mapping, TimeTAIString
-        reformatting) update an already-Good entry's data_value without touching
-        its timestamp, since the underlying OID was refreshed this cycle by the
-        base-class poll loop.
+        reformatting) are gated on entry.updated_this_cycle so they only fire
+        when a fresh SNMP value arrived this cycle — avoiding re-processing an
+        already-transformed value on cycles where the OID was not due.
 
         super().write_variables() then iterates self._store and writes every
         non-local entry to its OPC UA node.
@@ -547,12 +559,14 @@ class UCTSPoller(SNMPPoller):
                 self._apply_staleness("UpTimeMilliseconds", uptime_ms_entry, now)
 
         # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
-        # In-place transformation on an already-Good entry; timestamp is left
-        # unchanged since the underlying OID was refreshed this cycle.
+        # In-place transformation — only run when a fresh SNMP value arrived
+        # this cycle.  On cycles where the OID was not due (poll_every > 1),
+        # updated_this_cycle is False and the already-transformed string value
+        # is left untouched.
         pls_entry = self._store.get("PortLinkStatus")
-        if _entry_is_good(pls_entry):
+        if _entry_is_good(pls_entry) and pls_entry.updated_this_cycle:
             try:
-                mapped = {0: "na", 2: "up"}.get(
+                mapped = {0: "na", 1: "down", 2: "up"}.get(
                     int(pls_entry.data_value.Value.Value), "down"
                 )
                 pls_entry.data_value = _good_dv(mapped, "String")
@@ -560,10 +574,10 @@ class UCTSPoller(SNMPPoller):
                 log.warning("PortLinkStatus conversion error: %s", exc)
 
         # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
-        # In-place transformation; only reformat if T separator is absent
-        # (the hardware emulator already produces ISO 8601 directly).
+        # In-place transformation — only run when a fresh SNMP value arrived
+        # this cycle, for the same reason as PortLinkStatus above.
         tai_entry = self._store.get("TimeTAIString")
-        if _entry_is_good(tai_entry):
+        if _entry_is_good(tai_entry) and tai_entry.updated_this_cycle:
             try:
                 s = str(tai_entry.data_value.Value.Value)
                 if "T" not in s:
