@@ -852,9 +852,10 @@ class UCTSCommander:
         parent_node: Any,
         ns: int,
         poller: Optional[UCTSPoller] = None,
+        parent_path: str = "",
     ) -> None:
         """
-        Install all seven ICD-defined OPC UA Methods on parent_node.
+        Install all ICD-defined OPC UA Methods on parent_node.
 
         Parameters
         ----------
@@ -864,6 +865,10 @@ class UCTSCommander:
                      command succeeds, an immediate SNMP reload is triggered
                      so monitoring variables update without waiting for the
                      next scheduled poll interval.
+        parent_path  Dot-joined path of parent_node (e.g. "UCTS").  When
+                     provided, each method is created with a string NodeId of
+                     the form ns=2;s="UCTS.Configure" instead of an
+                     auto-generated numeric id.
         """
         commander = self
 
@@ -1007,7 +1012,12 @@ class UCTSCommander:
              [_arg("offset",           I)], R),
         ]
         for fn, name, in_args, out_args in method_defs:
-            await parent_node.add_method(ns, name, fn, in_args, out_args)
+            if parent_path:
+                method_id = ua.NodeId(f"{parent_path}.{name}", ns, ua.NodeIdType.String)
+                qname = ua.QualifiedName(name, ns)
+                await parent_node.add_method(method_id, qname, fn, in_args, out_args)
+            else:
+                await parent_node.add_method(ns, name, fn, in_args, out_args)
             log.debug("Registered method: %s", name)
 
         log.info("UCTSCommander: %d methods registered", len(method_defs))
@@ -1040,8 +1050,10 @@ class UCTSOPCUAServer(OPCUAServer):
         already-created UCTS root node and register the command methods on it.
         """
         await super()._build_address_space(server, ns_idx)
-        ucts_node, _ = await self._ensure_path(server, ns_idx, self.root_parts)
-        await self._commander.register_methods(ucts_node, ns_idx, self._poller)
+        ucts_node, ucts_path = await self._ensure_path(server, ns_idx, self.root_parts)
+        await self._commander.register_methods(
+            ucts_node, ns_idx, self._poller, parent_path=ucts_path
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
