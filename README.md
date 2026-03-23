@@ -34,19 +34,34 @@ Full options:
 | `--poll-interval F` | `1.0` | Poll interval (seconds) |
 | `--snmp-timeout F` | `2.0` | SNMP request timeout (seconds) |
 | `--snmp-retries N` | `1` | SNMP retries after first attempt |
-| `--monitoring-path S` | `Monitoring` | OPC UA path for monitoring node |
+| `--monitoring-path S` | `Monitoring` | OPC UA path for monitoring node (relative to UCTS root) |
 | `--variable-lifetime F` | `120.0` | Variable lifetime (seconds) |
 | `--post-cmd-delay F` | `0.2` | Settling delay (seconds) before SNMP reload after a command ACK |
 | `--tai-offset N` | `37` | TAI minus UTC offset in seconds (last leap second 2016-12-31) |
 | `--opcua-endpoint URL` | `opc.tcp://0.0.0.0:4840/ucts/` | OPC UA endpoint |
-| `--opcua-namespace URI` | — | OPC UA namespace URI |
+| `--opcua-namespace URI` | `http://cta-observatory.org/nectarcam/ucts/` | OPC UA namespace URI |
+| `--opcua-root PATH` | `UCTS` | Root object path in the OPC UA address space. Dot-separated components create nested browse levels, e.g. `NectarCAM.UCTS` creates `Objects/NectarCAM/UCTS/` |
 | `--opcua-user U:P` | — | Enable username/password authentication |
 | `--log-level LEVEL` | `INFO` | DEBUG / INFO / WARNING / ERROR |
 | `--log-file PATH` | — | Optional rotating log file |
+| `--dump-device-config` | — | Print the fully-resolved device configuration as JSON to stdout and exit. Useful for generating a device config file |
 
 ## OPC UA Address Space
 
 All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command methods are registered directly on `Objects/UCTS/`.
+
+### Node IDs
+
+All nodes use stable string NodeIds derived from their full dot-separated path within the server namespace, rather than auto-generated numeric IDs. For example, with the default `--opcua-root UCTS` and `--monitoring-path Monitoring`:
+
+| Node | NodeId |
+|------|--------|
+| UCTS root object | `ns=2;s="UCTS"` |
+| Monitoring object | `ns=2;s="UCTS.Monitoring"` |
+| A monitoring variable | `ns=2;s="UCTS.Monitoring.BusyCount"` |
+| A command method | `ns=2;s="UCTS.Start"` |
+
+These identifiers survive server restarts and are stable across re-deployments. If `--opcua-root` is changed (e.g. to `NectarCAM.UCTS`), the prefix changes accordingly (e.g. `ns=2;s="NectarCAM.UCTS.Monitoring.BusyCount"`).
 
 ### Monitoring Variables
 
@@ -69,14 +84,14 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `WrpcSwVersion` | String | White Rabbit PTP core software version |
 | `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
 | `tai_offset` | Int32 | TAI minus UTC offset in seconds as configured in this server (set via `--tai-offset` or `SetTaiOffset`). Reflects the server's working assumption and is not an authoritative statement of the current IERS value |
-| `snmp_host` | String | IP address of the SNMP device |
-| `snmp_port` | UInt16 | SNMP UDP port |
-| `snmp_polling_timestamp` | DateTime | Timestamp of the most recent poll |
-| `snmp_polling_age` | Double | Seconds since the last successful poll; keeps incrementing while the device is offline |
-| `snmp_polling_interval` | Double | Current polling interval (seconds) |
-| `snmp_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
-| `snmp_server_online` | Boolean | `True` when the SNMP agent is reachable (set exclusively by the bridge; never overridden by application logic) |
-| `device_state` | Byte | Application-level device state: `0` = offline, `1` = online (may be overridden by subclasses) |
+| `device_host` | String | IP address of the SNMP device |
+| `device_port` | UInt16 | SNMP UDP port |
+| `device_polling_timestamp` | DateTime | Timestamp of the most recent successful poll |
+| `device_polling_age` | Double | Seconds since the last successful poll; keeps incrementing while the device is offline |
+| `device_polling_interval` | Double | Current polling interval (seconds) |
+| `device_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
+| `device_server_online` | Boolean | `True` when the SNMP agent is reachable (set exclusively by the bridge; never overridden by application logic) |
+| `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 
