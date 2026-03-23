@@ -83,6 +83,7 @@ Usage
   --post-cmd-delay F    Delay before SNMP reload after command ACK (default: 0.2)
   --opcua-endpoint URL  OPC UA endpoint URL          (default: opc.tcp://0.0.0.0:4840/ucts/)
   --opcua-namespace URI OPC UA namespace URI
+  --opcua-root PATH     Root object path in the OPC UA address space (default: UCTS)
   --opcua-user U:P      Enable username/password auth
   --log-level LEVEL     DEBUG/INFO/WARNING/ERROR     (default: INFO)
   --log-file PATH       Optional rotating log file
@@ -1058,6 +1059,12 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--opcua-namespace",
                    default="http://cta-observatory.org/nectarcam/ucts/",
                    help="OPC UA namespace URI")
+    p.add_argument("--opcua-root",       default="UCTS",
+                   metavar="PATH",
+                   help="Root object path in the OPC UA address space "
+                        "(default: UCTS). "
+                        "Dot-separated components create nested browse levels, e.g. "
+                        "NectarCAM.UCTS creates Objects/NectarCAM/UCTS/")
     p.add_argument("--opcua-user", default=None, metavar="USER:PASS",
                    help="OPC UA username:password (disables anonymous access)")
     p.add_argument("--snmp-timeout",  default=2.0, type=float, metavar="SECONDS",
@@ -1132,7 +1139,7 @@ async def _async_main() -> None:
     opcua_server = UCTSOPCUAServer(
         endpoint=args.opcua_endpoint,
         namespace=args.opcua_namespace,
-        root_path="UCTS",
+        root_path=args.opcua_root,
         user=user,
         password=password,
         commander=commander,
