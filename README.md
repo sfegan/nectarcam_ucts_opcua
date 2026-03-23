@@ -76,7 +76,7 @@ All monitoring variables are exposed under `Objects/UCTS/Monitoring/`. Command m
 | `snmp_polling_interval` | Double | Current polling interval (seconds) |
 | `snmp_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
 | `snmp_server_online` | Boolean | `True` when the SNMP agent is reachable (set exclusively by the bridge; never overridden by application logic) |
-| `cls_state` | Byte | Application-level device state: `0` = offline, `1` = online (may be overridden by subclasses) |
+| `device_state` | Byte | Application-level device state: `0` = offline, `1` = online (may be overridden by subclasses) |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 

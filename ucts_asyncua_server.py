@@ -60,7 +60,7 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           snmp_polling_interval       <- built-in
           snmp_polling_success_count  <- built-in: cumulative successful polls
           snmp_server_online          <- built-in: True when SNMP agent reachable
-          cls_state                   <- built-in: 0=offline 1=online
+          device_state                <- built-in: 0=offline 1=online
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
       _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)

@@ -75,7 +75,7 @@ _MONITORING_VARS = [
     # Built-in server variables
     "snmp_host", "snmp_port", "snmp_polling_timestamp", "snmp_polling_age",
     "snmp_polling_interval", "snmp_polling_success_count",
-    "snmp_server_online", "cls_state",
+    "snmp_server_online", "device_state",
 ]
 
 _METHODS = [
