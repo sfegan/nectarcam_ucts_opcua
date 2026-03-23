@@ -106,7 +106,7 @@ from dataclasses import dataclass, field
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar, Dict, List, Optional
 
 # ── bridge imports ────────────────────────────────────────────────────────────
 try:
@@ -130,7 +130,7 @@ try:
 except ImportError:
     sys.exit("asyncua is required:  pip install asyncua")
 
-log = logging.getLogger("ucts_server")
+log = logging.getLogger("ucts_asyncua_server")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardcoded UCTS device configuration
@@ -396,12 +396,13 @@ class UCTSPoller(SNMPPoller):
 
     # Expected store entries for derived-variable computation:
     #   name → required opcua_type
-    _DERIVED_SOURCES: dict = {
+    # Declared as ClassVar so the dataclass machinery ignores them.
+    _DERIVED_SOURCES: ClassVar[dict[str, str]] = {
         "_DstMacAddr_32MSB": "ByteString",
         "_DstMacAddr_16LSB": "ByteString",
         "_RawStatus":        "ByteString",
     }
-    _DERIVED_OUTPUTS: dict = {
+    _DERIVED_OUTPUTS: ClassVar[dict[str, str]] = {
         "DstMacAddr":      "String",
         "Status":          "Int64",
         "State":           "Int32",
@@ -1107,7 +1108,7 @@ def _parse_args() -> argparse.Namespace:
 
 async def _async_main() -> None:
     args = _parse_args()
-    setup_logging(args.log_level, args.log_file)
+    setup_logging(args.log_level, args.log_file, "ucts_asyncua_server")
 
     user = password = None
     if args.opcua_user:
