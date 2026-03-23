@@ -114,7 +114,6 @@ try:
         NodeSpec,
         OPCUAServer,
         SNMPPoller,
-        StoreEntry,
         _cast_to_ua,
         setup_logging,
     )
@@ -369,19 +368,6 @@ def _good_dv(value: Any, opcua_type: str) -> ua.DataValue:
     return ua.DataValue(variant) if isinstance(variant, ua.Variant) else variant
 
 
-def _entry_is_good(entry: Optional[StoreEntry]) -> bool:
-    """
-    Return True if *entry* exists and carries Good OPC UA status (StatusCode == 0).
-
-    Used to gate derived-value computation: a derived variable is only
-    recalculated when all the source entries it depends on were refreshed with
-    Good status in the current polling iteration.
-    """
-    if entry is None:
-        return False
-    sc = entry.data_value.StatusCode
-    return sc is not None and sc.value == 0
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UCTSPoller -- pure SNMP monitoring
@@ -407,6 +393,53 @@ class UCTSPoller(SNMPPoller):
 
     No knowledge of UDP commands or OPC UA Methods.
     """
+
+    # Expected store entries for derived-variable computation:
+    #   name → required opcua_type
+    _DERIVED_SOURCES: dict = {
+        "_DstMacAddr_32MSB": "ByteString",
+        "_DstMacAddr_16LSB": "ByteString",
+        "_RawStatus":        "ByteString",
+    }
+    _DERIVED_OUTPUTS: dict = {
+        "DstMacAddr":      "String",
+        "Status":          "Int64",
+        "State":           "Int32",
+        "FirmwareVersion": "String",
+        "PortLinkStatus":  "String",
+        "TimeTAIString":   "String",
+    }
+
+    async def on_address_space_ready(self) -> None:
+        """
+        Validate that all store entries required for derived-variable
+        computation are present and have the expected OPC UA type.
+
+        Called once after the store is fully populated.  Any mismatch
+        indicates a misconfigured _UCTS_CONFIG and is treated as fatal:
+        a CRITICAL message is logged and the process exits immediately
+        rather than silently producing wrong values at runtime.
+        """
+        await super().on_address_space_ready()
+        errors: list[str] = []
+        for name, expected_type in {
+            **self._DERIVED_SOURCES,
+            **self._DERIVED_OUTPUTS,
+        }.items():
+            entry = self._store.get(name)
+            if entry is None:
+                errors.append(f"  {name!r}: missing from store")
+            elif entry.opcua_type != expected_type:
+                errors.append(
+                    f"  {name!r}: expected opcua_type={expected_type!r}, "
+                    f"got {entry.opcua_type!r}"
+                )
+        if errors:
+            log.critical(
+                "UCTSPoller store validation failed — misconfigured _UCTS_CONFIG:\n%s",
+                "\n".join(errors),
+            )
+            sys.exit(1)
 
     def get_tai_offset(self) -> int:
         """Return the current TAI−UTC offset in seconds from the store."""
@@ -436,115 +469,91 @@ class UCTSPoller(SNMPPoller):
         """
         Compute derived store entries then delegate to super() for OPC UA writes.
 
-        For each derived variable: if all source OID entries are Good this cycle,
-        compute the new value and update the entry's timestamp to now.  If any
-        source is not Good, call self._apply_staleness(name, entry, now) on the
-        derived entry — the base class single-entry method — so that its status
-        degrades (Uncertain → BadNoCommunication) according to its own lifetime
-        setting, consistently with how polled OIDs are handled.
+        Store entries and their opcua_types are guaranteed correct by
+        on_address_space_ready(), so no None or isinstance guards are needed.
 
-        In-place transformations (PortLinkStatus enum mapping, TimeTAIString
-        reformatting) are gated on entry.updated_this_cycle so they only fire
-        when a fresh SNMP value arrived this cycle — avoiding re-processing an
-        already-transformed value on cycles where the OID was not due.
+        Derived variables (DstMacAddr, Status, State, FirmwareVersion)
+        ---------------------------------------------------------------
+        Recomputed only when all source OIDs have ``updated_this_cycle=True``.
+        On recompute: ``updated_this_cycle``, ``timestamp``, and ``next_cycle``
+        (set to min of sources) are propagated to the derived entry.
+        ``_apply_staleness`` is then called unconditionally when
+        ``_polling_cycle >= entry.next_cycle``, mirroring the base-class
+        behaviour for polled OIDs.
 
-        super().write_variables() then iterates self._store and writes every
-        non-local entry to its OPC UA node.
+        In-place transformations (PortLinkStatus, TimeTAIString)
+        ---------------------------------------------------------
+        Gated on ``updated_this_cycle`` so they only fire when a fresh SNMP
+        value arrived this cycle.
         """
         now = time.monotonic()
 
         # ── MAC address: merge two OctetString halves ─────────────────────────
-        msb_entry = self._store.get("_DstMacAddr_32MSB")
-        lsb_entry = self._store.get("_DstMacAddr_16LSB")
-        mac_entry  = self._store.get("DstMacAddr")
+        msb_entry = self._store["_DstMacAddr_32MSB"]
+        lsb_entry = self._store["_DstMacAddr_16LSB"]
+        mac_entry = self._store["DstMacAddr"]
 
-        if mac_entry is not None:
-            if _entry_is_good(msb_entry) and _entry_is_good(lsb_entry):
-                msb_raw = msb_entry.data_value.Value.Value
-                lsb_raw = lsb_entry.data_value.Value.Value
-                if isinstance(msb_raw, (bytes, bytearray)) and \
-                   isinstance(lsb_raw, (bytes, bytearray)):
-                    try:
-                        mac_entry.data_value = _good_dv(
-                            _merge_mac(bytes(msb_raw), bytes(lsb_raw)), "String"
-                        )
-                        mac_entry.timestamp = now
-                    except Exception as exc:
-                        log.warning("MAC merge error: %s", exc)
-                        self._apply_staleness("DstMacAddr", mac_entry, now)
-                else:
-                    log.warning("_DstMacAddr halves not bytes: msb=%r lsb=%r",
-                                msb_raw, lsb_raw)
-                    self._apply_staleness("DstMacAddr", mac_entry, now)
-            else:
-                self._apply_staleness("DstMacAddr", mac_entry, now)
+        if msb_entry.updated_this_cycle and lsb_entry.updated_this_cycle:
+            try:
+                mac_entry.data_value         = _good_dv(
+                    _merge_mac(
+                        bytes(msb_entry.data_value.Value.Value),
+                        bytes(lsb_entry.data_value.Value.Value),
+                    ), "String"
+                )
+                mac_entry.timestamp          = now
+                mac_entry.updated_this_cycle = True
+                mac_entry.next_cycle         = min(
+                    msb_entry.next_cycle, lsb_entry.next_cycle
+                )
+            except Exception as exc:
+                log.warning("MAC merge error: %s", exc)
+        if self._polling_cycle >= mac_entry.next_cycle:
+            self._apply_staleness("DstMacAddr", mac_entry, now)
 
         # ── Status word: ByteString → uint32 → Status / State / FirmwareVersion
-        raw_entry    = self._store.get("_RawStatus")
-        status_entry = self._store.get("Status")
-        state_entry  = self._store.get("State")
-        fw_entry     = self._store.get("FirmwareVersion")
+        raw_entry    = self._store["_RawStatus"]
+        status_entry = self._store["Status"]
+        state_entry  = self._store["State"]
+        fw_entry     = self._store["FirmwareVersion"]
 
-        if _entry_is_good(raw_entry):
-            raw = raw_entry.data_value.Value.Value
-            if isinstance(raw, (bytes, bytearray)):
-                try:
-                    status_int = _octetstr_to_uint32(bytes(raw))
-                    for entry, name, val in (
-                        (status_entry, "Status",          status_int),
-                        (state_entry,  "State",           _state_from_status(status_int)),
-                        (fw_entry,     "FirmwareVersion", _fw_version_from_status(status_int)),
-                    ):
-                        if entry is not None:
-                            entry.data_value = _good_dv(val, entry.opcua_type)
-                            entry.timestamp  = now
-                except Exception as exc:
-                    log.warning("Status decode error: %s", exc)
-                    for entry, name in (
-                        (status_entry, "Status"),
-                        (state_entry,  "State"),
-                        (fw_entry,     "FirmwareVersion"),
-                    ):
-                        if entry is not None:
-                            self._apply_staleness(name, entry, now)
-            else:
-                log.warning("_RawStatus value not bytes: %r", raw)
-                for entry, name in (
-                    (status_entry, "Status"),
-                    (state_entry,  "State"),
-                    (fw_entry,     "FirmwareVersion"),
+        if raw_entry.updated_this_cycle:
+            try:
+                status_int = _octetstr_to_uint32(bytes(raw_entry.data_value.Value.Value))
+                for entry, val in (
+                    (status_entry, status_int),
+                    (state_entry,  _state_from_status(status_int)),
+                    (fw_entry,     _fw_version_from_status(status_int)),
                 ):
-                    if entry is not None:
-                        self._apply_staleness(name, entry, now)
-        else:
-            for entry, name in (
-                (status_entry, "Status"),
-                (state_entry,  "State"),
-                (fw_entry,     "FirmwareVersion"),
-            ):
-                if entry is not None:
-                    self._apply_staleness(name, entry, now)
+                    entry.data_value         = _good_dv(val, entry.opcua_type)
+                    entry.timestamp          = now
+                    entry.updated_this_cycle = True
+                    entry.next_cycle         = raw_entry.next_cycle
+            except Exception as exc:
+                log.warning("Status decode error: %s", exc)
+        for entry, name in (
+            (status_entry, "Status"),
+            (state_entry,  "State"),
+            (fw_entry,     "FirmwareVersion"),
+        ):
+            if self._polling_cycle >= entry.next_cycle:
+                self._apply_staleness(name, entry, now)
 
         # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
-        # In-place transformation — only run when a fresh SNMP value arrived
-        # this cycle.  On cycles where the OID was not due (poll_every > 1),
-        # updated_this_cycle is False and the already-transformed string value
-        # is left untouched.
-        pls_entry = self._store.get("PortLinkStatus")
-        if _entry_is_good(pls_entry) and pls_entry.updated_this_cycle:
+        pls_entry = self._store["PortLinkStatus"]
+        if pls_entry.updated_this_cycle:
             try:
-                mapped = {0: "na", 1: "down", 2: "up"}.get(
-                    int(pls_entry.data_value.Value.Value), "down"
+                pls_entry.data_value = _good_dv(
+                    {0: "na", 1: "down", 2: "up"}.get(
+                        int(pls_entry.data_value.Value.Value), "down"
+                    ), "String"
                 )
-                pls_entry.data_value = _good_dv(mapped, "String")
             except (ValueError, TypeError) as exc:
                 log.warning("PortLinkStatus conversion error: %s", exc)
 
         # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
-        # In-place transformation — only run when a fresh SNMP value arrived
-        # this cycle, for the same reason as PortLinkStatus above.
-        tai_entry = self._store.get("TimeTAIString")
-        if _entry_is_good(tai_entry) and tai_entry.updated_this_cycle:
+        tai_entry = self._store["TimeTAIString"]
+        if tai_entry.updated_this_cycle:
             try:
                 s = str(tai_entry.data_value.Value.Value)
                 if "T" not in s:
