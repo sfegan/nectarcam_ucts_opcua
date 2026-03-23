@@ -1040,7 +1040,7 @@ class UCTSOPCUAServer(OPCUAServer):
         already-created UCTS root node and register the command methods on it.
         """
         await super()._build_address_space(server, ns_idx)
-        ucts_node = await self._ensure_path(server, ns_idx, self.root_parts)
+        ucts_node, _ = await self._ensure_path(server, ns_idx, self.root_parts)
         await self._commander.register_methods(ucts_node, ns_idx, self._poller)
 
 
