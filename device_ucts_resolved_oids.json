@@ -1,10 +1,11 @@
 {
-  "host": "127.0.0.1",
-  "port": 1161,
+  "host": "10.10.3.99",
+  "port": 161,
   "community": "public",
   "description": "UCTS SNMP Device",
   "opcua_path": "Monitoring",
   "poll_interval": 1.0,
+  "oids_per_get": 1,
   "oids": [
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
@@ -16,25 +17,29 @@
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.3.1",
       "opcua_name": "DstIpAddr",
       "opcua_type": "String",
-      "description": "Destination IP address of UCTS timestamps"
+      "description": "Destination IP address of UCTS timestamps",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
       "opcua_name": "_DstMacAddr_32MSB",
       "opcua_type": "ByteString",
-      "description": "(internal) 32 MSB of destination MAC address"
+      "description": "(internal) 32 MSB of destination MAC address",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
       "opcua_name": "_DstMacAddr_16LSB",
       "opcua_type": "ByteString",
-      "description": "(internal) 16 LSB of destination MAC address"
+      "description": "(internal) 16 LSB of destination MAC address",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
       "opcua_name": "DstPort",
-      "opcua_type": "Int32",
-      "description": "Destination port of UCTS timestamps"
+      "opcua_type": "UInt16",
+      "description": "Destination port of UCTS timestamps",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.7.1",
@@ -52,43 +57,50 @@
       "oid": "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
       "opcua_name": "Throttle",
       "opcua_type": "Int64",
-      "description": "Throttle parameter of UCTS TiCkS"
+      "description": "Throttle parameter of UCTS TiCkS",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.7.1.0",
       "opcua_name": "PortLinkStatus",
       "opcua_type": "String",
-      "description": "Port link status"
+      "description": "Port link status",
+      "poll_every": 60
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.3.1.3.1",
       "opcua_name": "Temperature",
       "opcua_type": "Float",
-      "description": "Temperature of the TiCkS PCB (degrees C)"
+      "description": "Temperature of the TiCkS PCB (degrees C)",
+      "poll_every": 10
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.2.1.0",
       "opcua_name": "TimeTAI",
       "opcua_type": "Int64",
-      "description": "TAI time"
+      "description": "TAI time",
+      "poll_every": 10
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.2.2.0",
       "opcua_name": "TimeTAIString",
       "opcua_type": "String",
-      "description": "TAI time string (ISO 8601)"
+      "description": "TAI time string (ISO 8601)",
+      "poll_every": 10
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.2.3.0",
       "opcua_name": "UpTime",
       "opcua_type": "String",
-      "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')"
+      "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')",
+      "poll_every": 10
     },
     {
       "oid": "1.3.6.1.4.1.96.101.1.1.2.0",
       "opcua_name": "WrpcSwVersion",
       "opcua_type": "String",
-      "description": "Version of the wrpc software"
+      "description": "Version of the wrpc software",
+      "poll_every": 60
     }
   ],
   "constants": [
@@ -97,6 +109,18 @@
       "opcua_type": "String",
       "description": "Version of the UCTS controller",
       "value": "2.0.0"
+    },
+    {
+      "opcua_name": "tai_offset",
+      "opcua_type": "Int32",
+      "description": "TAI minus UTC offset in seconds as configured in this server (set via --tai-offset or SetTaiOffset). This reflects the server's working assumption and is not an authoritative statement of the current IERS value.",
+      "value": 37
+    },
+    {
+      "opcua_name": "device_command_port",
+      "opcua_type": "UInt16",
+      "description": "Port number for UDP device commands",
+      "value": 12345
     },
     {
       "opcua_name": "Status",
@@ -113,19 +137,13 @@
     {
       "opcua_name": "State",
       "opcua_type": "Int32",
-      "description": "TiCkS state: 1=Running, 0=Online, 2=Unknown",
+      "description": "TiCkS state: 1=Running, 0=Online/Standby (from Status bit 7)",
       "value": null
     },
     {
       "opcua_name": "FirmwareVersion",
       "opcua_type": "String",
       "description": "TiCkS firmware version (from Status bits 23:16)",
-      "value": null
-    },
-    {
-      "opcua_name": "UpTimeMilliseconds",
-      "opcua_type": "Double",
-      "description": "Uptime of the UCTS in milliseconds (derived from UpTime)",
       "value": null
     }
   ],
