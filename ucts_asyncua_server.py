@@ -53,14 +53,13 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           UpTime           <- polled: timedelta → formatted String (e.g. "5:23:49.160000")
           WrpcSwVersion
           SoftwareVersion  <- constant
-          snmp_host                   <- built-in: SNMP device IP
-          snmp_port                   <- built-in: SNMP port
-          snmp_polling_timestamp      <- built-in
-          snmp_polling_age            <- built-in
-          snmp_polling_interval       <- built-in
-          snmp_polling_success_count  <- built-in: cumulative successful polls
-          snmp_server_online          <- built-in: True when SNMP agent reachable
-          device_state                <- built-in: 0=offline 1=online
+          device_host                      <- built-in: SNMP device IP
+          device_port                      <- built-in: SNMP port
+          device_polling_interval          <- built-in: poll interval in seconds
+          device_connection_downtime       <- built-in: seconds since last successful poll; 0.0 while connected
+          device_connection_uptime         <- built-in: seconds since device last came online; 0.0 while offline
+          device_connection_established    <- built-in: True when SNMP agent reachable
+          device_state                     <- built-in: 0=offline 1=online
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
       _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)
@@ -362,10 +361,23 @@ def _fw_version_from_status(status: int) -> str:
     return "" if status == 0 else str((status >> 16) & 0xFF)
 
 
-def _good_dv(value: Any, opcua_type: str) -> ua.DataValue:
-    """Shorthand: build a Good ua.DataValue from a Python value."""
+def _good_dv(
+    value: Any,
+    opcua_type: str,
+    source_timestamp: Optional[Any] = None,
+) -> ua.DataValue:
+    """
+    Shorthand: build a Good ua.DataValue from a Python value.
+
+    source_timestamp, when provided, is set as the SourceTimestamp on the
+    returned DataValue.  Callers should pass the SourceTimestamp from the
+    source store entry so derived variables inherit the observation time of
+    their inputs rather than the time of computation.
+    """
     variant = _cast_to_ua(value, opcua_type)
-    return ua.DataValue(variant) if isinstance(variant, ua.Variant) else variant
+    if not isinstance(variant, ua.Variant):
+        return variant   # cast failed — already a bad-status DataValue
+    return ua.DataValue(Value=variant, SourceTimestamp=source_timestamp)
 
 
 
@@ -442,6 +454,32 @@ class UCTSPoller(SNMPPoller):
             )
             sys.exit(1)
 
+        _poll_ms = self.poll_interval * 1000.0
+        _min_sampling: Dict[str, float] = {}
+        for oid_cfg in self.oids:
+            _min_sampling[oid_cfg.opcua_name] = _poll_ms * oid_cfg.poll_every
+
+        # --- helper: set sampling interval (ms) ---
+        async def _set_msi(name: str, value: float) -> None:
+            await self._node_map[name].write_attribute(
+                ua.AttributeIds.MinimumSamplingInterval,
+                ua.DataValue(ua.Variant(value, ua.VariantType.Double))
+            )
+
+        # --- single-source derived variables ---
+        raw_status_interval = _min_sampling.get("_RawStatus", _poll_ms)
+
+        for name in ("Status", "State", "FirmwareVersion"):
+            await _set_msi(name, raw_status_interval)
+
+        # --- multi-source derived variables ---
+        mac_interval = min(
+            _min_sampling.get("_DstMacAddr_32MSB", _poll_ms),
+            _min_sampling.get("_DstMacAddr_16LSB", _poll_ms),
+        )
+        log.error("MAC merge interval set to %.1f ms", mac_interval)
+        await _set_msi("DstMacAddr", mac_interval)
+
     def get_tai_offset(self) -> int:
         """Return the current TAI−UTC offset in seconds from the store."""
         entry = self._store.get("tai_offset")
@@ -496,11 +534,20 @@ class UCTSPoller(SNMPPoller):
 
         if msb_entry.updated_this_cycle and lsb_entry.updated_this_cycle:
             try:
+                # SourceTimestamp is the earlier of the two sources — the derived
+                # value is only as fresh as its oldest input.
+                src_ts = min(
+                    (t for t in (
+                        msb_entry.data_value.SourceTimestamp,
+                        lsb_entry.data_value.SourceTimestamp,
+                    ) if t is not None),
+                    default=None,
+                )
                 mac_entry.data_value         = _good_dv(
                     _merge_mac(
                         bytes(msb_entry.data_value.Value.Value),
                         bytes(lsb_entry.data_value.Value.Value),
-                    ), "String"
+                    ), "String", src_ts
                 )
                 mac_entry.timestamp          = now
                 mac_entry.updated_this_cycle = True
@@ -521,12 +568,13 @@ class UCTSPoller(SNMPPoller):
         if raw_entry.updated_this_cycle:
             try:
                 status_int = _octetstr_to_uint32(bytes(raw_entry.data_value.Value.Value))
+                src_ts = raw_entry.data_value.SourceTimestamp
                 for entry, val in (
                     (status_entry, status_int),
                     (state_entry,  _state_from_status(status_int)),
                     (fw_entry,     _fw_version_from_status(status_int)),
                 ):
-                    entry.data_value         = _good_dv(val, entry.opcua_type)
+                    entry.data_value         = _good_dv(val, entry.opcua_type, src_ts)
                     entry.timestamp          = now
                     entry.updated_this_cycle = True
                     entry.next_cycle         = raw_entry.next_cycle
@@ -547,7 +595,7 @@ class UCTSPoller(SNMPPoller):
                 pls_entry.data_value = _good_dv(
                     {0: "na", 1: "down", 2: "up"}.get(
                         int(pls_entry.data_value.Value.Value), "down"
-                    ), "String"
+                    ), "String", pls_entry.data_value.SourceTimestamp
                 )
             except (ValueError, TypeError) as exc:
                 log.warning("PortLinkStatus conversion error: %s", exc)
@@ -561,7 +609,9 @@ class UCTSPoller(SNMPPoller):
                     pos = s.rfind("-")
                     if pos != -1:
                         s = s[:pos] + "T" + s[pos + 1:]
-                tai_entry.data_value = _good_dv(s, "String")
+                tai_entry.data_value = _good_dv(
+                    s, "String", tai_entry.data_value.SourceTimestamp
+                )
             except Exception as exc:
                 log.warning("TimeTAIString reformat error: %s", exc)
 
