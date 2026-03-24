@@ -188,7 +188,7 @@ _UCTS_CONFIG: dict = {
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
             "opcua_name":  "DstPort",
-            "opcua_type":  "Int32",
+            "opcua_type":  "UInt16",
             "description": "Destination port of UCTS timestamps",
             "poll_every":  60,
         },
@@ -275,6 +275,12 @@ _UCTS_CONFIG: dict = {
                            "server's working assumption and is not an authoritative "
                            "statement of the current IERS value.",
             "value":       _TAI_UTC_DELTA,
+        },
+        {
+            "opcua_name":  "device_command_port",
+            "opcua_type":  "UInt16",
+            "description": "Port number for UDP device commands",
+            "value":       12345,  # Example value, replace with actual port number
         },
         # Derived variables — computed in write_variables() from local OIDs.
         # value=None → base class creates OPC UA node with BadWaitingForInitialData.
@@ -1193,6 +1199,9 @@ async def _async_main() -> None:
     for c in cfg["constants"]:
         if c["opcua_name"] == "tai_offset":
             c["value"] = args.tai_offset
+            break
+        if c["opcua_name"] == "device_command_port":
+            c["value"] = args.ucts_cmd_port
             break
 
     if args.dump_device_config:
