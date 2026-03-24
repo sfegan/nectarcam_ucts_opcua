@@ -5,7 +5,7 @@ OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** contro
 ## Dependencies
 
 ```bash
-pip install pysnmp-lextudio asyncua
+pip install pysnmp asyncua
 ```
 
 The server also requires the `snmp_asyncua_bridge` module from [nectarcam_snmp_opcua](https://github.com/sfegan/nectarcam_snmp_opcua):
@@ -86,11 +86,11 @@ These identifiers survive server restarts and are stable across re-deployments. 
 | `tai_offset` | Int32 | TAI minus UTC offset in seconds as configured in this server (set via `--tai-offset` or `SetTaiOffset`). Reflects the server's working assumption and is not an authoritative statement of the current IERS value |
 | `device_host` | String | IP address of the SNMP device |
 | `device_port` | UInt16 | SNMP UDP port |
-| `device_polling_timestamp` | DateTime | Timestamp of the most recent successful poll |
-| `device_polling_age` | Double | Seconds since the last successful poll; keeps incrementing while the device is offline |
-| `device_polling_interval` | Double | Current polling interval (seconds) |
-| `device_polling_success_count` | UInt32 | Cumulative successful SNMP polls |
-| `device_server_online` | Boolean | `True` when the SNMP agent is reachable (set exclusively by the bridge; never overridden by application logic) |
+| `device_command_port` | UInt16 | Port number for UDP device commands (default: `55010`) |
+| `device_polling_interval` | Double | Current polling interval in seconds |
+| `device_connection_downtime` | Double | Seconds since the last successful SNMP poll; `0.0` while connected |
+| `device_connection_uptime` | Double | Seconds elapsed since the device last came online; `0.0` while offline |
+| `device_connection_established` | Boolean | `True` when the SNMP agent is reachable |
 | `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
