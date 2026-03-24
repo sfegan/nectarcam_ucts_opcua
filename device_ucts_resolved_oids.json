@@ -120,7 +120,7 @@
       "opcua_name": "device_command_port",
       "opcua_type": "UInt16",
       "description": "Port number for UDP device commands",
-      "value": 12345
+      "value": 55010
     },
     {
       "opcua_name": "Status",

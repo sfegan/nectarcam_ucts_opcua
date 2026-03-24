@@ -280,7 +280,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "device_command_port",
             "opcua_type":  "UInt16",
             "description": "Port number for UDP device commands",
-            "value":       12345,  # Example value, replace with actual port number
+            "value":       55010,  # Example value, replace with actual port number
         },
         # Derived variables — computed in write_variables() from local OIDs.
         # value=None → base class creates OPC UA node with BadWaitingForInitialData.
