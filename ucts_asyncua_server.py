@@ -477,14 +477,15 @@ class UCTSPoller(SNMPPoller):
 
         for name in ("Status", "State", "FirmwareVersion"):
             await _set_msi(name, raw_status_interval)
+            log.debug("%s minimum sampling interval set to %.1f ms", name, raw_status_interval)
 
         # --- multi-source derived variables ---
         mac_interval = min(
             _min_sampling.get("_DstMacAddr_32MSB", _poll_ms),
             _min_sampling.get("_DstMacAddr_16LSB", _poll_ms),
         )
-        log.error("MAC merge interval set to %.1f ms", mac_interval)
         await _set_msi("DstMacAddr", mac_interval)
+        log.debug("DstMacAddr minimum sampling interval set to %.1f ms", mac_interval)
 
     def get_tai_offset(self) -> int:
         """Return the current TAI−UTC offset in seconds from the store."""
