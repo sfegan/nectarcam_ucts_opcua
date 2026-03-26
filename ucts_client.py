@@ -124,7 +124,7 @@ class _ChangeHandler(SubHandler):
         dv = data.monitored_item.Value
         status = dv.StatusCode_ if dv.StatusCode_ else "Good"
         ts = dv.SourceTimestamp or dv.ServerTimestamp or ""
-        print(f"\r  [sub] {name:20s} = {val!r:30s}  status={status}  {ts}")
+        print(f"\r  [sub] {name:30s} = {val!r:30s}  status={status}  {ts}")
         print("ucts> ", end="", flush=True)
 
     def event_notification(self, event) -> None:
