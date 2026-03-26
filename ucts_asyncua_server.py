@@ -467,10 +467,12 @@ class UCTSPoller(SNMPPoller):
 
         # --- helper: set sampling interval (ms) ---
         async def _set_msi(name: str, value: float) -> None:
-            await self._node_map[name].write_attribute(
-                ua.AttributeIds.MinimumSamplingInterval,
-                ua.DataValue(ua.Variant(value, ua.VariantType.Double))
-            )
+            entry = self._store.get(name)
+            if entry and entry.node:
+                await entry.node.write_attribute(
+                    ua.AttributeIds.MinimumSamplingInterval,
+                    ua.DataValue(ua.Variant(value, ua.VariantType.Double))
+                )
 
         # --- single-source derived variables ---
         raw_status_interval = _min_sampling.get("_RawStatus", _poll_ms)
