@@ -91,7 +91,7 @@ These identifiers survive server restarts and are stable across re-deployments. 
 | `device_connection_downtime` | Double | Seconds since the last successful SNMP poll; `0.0` while connected |
 | `device_connection_uptime` | Double | Seconds elapsed since the device last came online; `0.0` while offline |
 | `device_connected` | Boolean | `True` when the SNMP agent is reachable |
-| `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online |
+| `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online, `2` = running |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 
