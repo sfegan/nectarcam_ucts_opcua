@@ -138,7 +138,7 @@ log = logging.getLogger("ucts_asyncua_server")
 # Local (underscore-prefixed) OIDs are polled and held in self._store but
 # never published as OPC UA nodes:
 #   _DstMacAddr_32MSB / _DstMacAddr_16LSB  → merged into DstMacAddr
-#   _RawStatus                              → decoded into Status/State/FirmwareVersion
+#   _RawStatus                             → decoded into Status/State/FirmwareVersion
 #
 # Derived variables are declared as constants with value=None so the base
 # class creates their OPC UA nodes with BadWaitingForInitialData; they are
@@ -150,15 +150,15 @@ _TAI_UTC_DELTA = 37    # TAI − UTC in seconds; last updated 2016-12-31 (IERS b
                        # Check https://www.ietf.org/timezones/data/leap-seconds.list if updating
 
 _UCTS_CONFIG: dict = {
-    "host":          "10.10.3.99",   # overridden at runtime via --ucts-ip
-    "port":          161,
-    "community":     "public",
-    "description":   "UCTS SNMP Device",
-    "opcua_path":    "Monitoring",
-    "poll_interval": 1,
-    "backoff_interval": 30,
-    "default_lifetime": 60,
-    "oids_per_get":  1,
+    "host":                 "10.10.3.99",    # overridden at runtime via --ucts-ip
+    "port":                 161,             # overridden at runtime via --ucts-snmp-port
+    "community":            "public",
+    "description":          "UCTS SNMP Device",
+    "opcua_path":           "Monitoring",    # overridden at runtime via --monitoring-path
+    "poll_interval":        1,               # overridden at runtime via --poll-interval
+    "backoff_interval":     30,
+    "default_lifetime":     60,
+    "oids_per_get":         1,               # required by WR mini SMNP server
     "oids": [
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
@@ -643,8 +643,6 @@ class UCTSPoller(SNMPPoller):
 # UCTSCommander -- all UDP command logic, no OPC UA / SNMP knowledge
 # ─────────────────────────────────────────────────────────────────────────────
 
-
-
 @dataclass
 class UCTSCommander:
     """
@@ -821,7 +819,7 @@ class UCTSCommander:
         try:
             dt = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
             if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.replace(tzinfo=datetime.timezone.utc)
             tai_sec = int(dt.timestamp()) + tai_offset
             sub_ns8 = int((dt.timestamp() % 1.0) * 1e9 / 8)
         except (ValueError, OverflowError) as exc:
