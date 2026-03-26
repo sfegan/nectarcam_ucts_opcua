@@ -156,6 +156,8 @@ _UCTS_CONFIG: dict = {
     "description":   "UCTS SNMP Device",
     "opcua_path":    "Monitoring",
     "poll_interval": 1,
+    "backoff_interval": 30,
+    "default_lifetime": 60,
     "oids_per_get":  1,
     "oids": [
         {
