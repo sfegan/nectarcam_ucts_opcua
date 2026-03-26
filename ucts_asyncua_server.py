@@ -626,6 +626,15 @@ class UCTSPoller(SNMPPoller):
             except Exception as exc:
                 log.warning("TimeTAIString reformat error: %s", exc)
 
+        # -- device_state: set to 2 if online and running --
+        device_state_entry = self._store["device_state"]
+        log.error("HELLO %d %d",device_state_entry.data_value.Value.Value, self._store["State"].data_value.Value.Value)
+        if device_state_entry.updated_since_write \
+                and device_state_entry.data_value.Value.Value == 1 \
+                and self._store["State"].data_value.Value.Value == 1:
+            device_state_entry.data_value = _good_dv(2, "Int32", device_state_entry.data_value.SourceTimestamp)
+
+        # -- call super to write all modified variables to OPC UA --
         await super().write_variables(write_all_values)
 
 
