@@ -1,10 +1,11 @@
 {
-  "host": "10.10.3.99",
-  "port": 161,
+  "host": "127.0.0.1",
+  "port": 1161,
   "community": "public",
   "description": "UCTS SNMP Device",
   "opcua_path": "Monitoring",
   "poll_interval": 1.0,
+  "backoff_interval": 60.0,
   "oids_per_get": 1,
   "oids": [
     {

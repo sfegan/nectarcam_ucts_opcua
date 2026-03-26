@@ -58,7 +58,7 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           device_polling_interval          <- built-in: poll interval in seconds
           device_connection_downtime       <- built-in: seconds since last successful poll; 0.0 while connected
           device_connection_uptime         <- built-in: seconds since device last came online; 0.0 while offline
-          device_connection_established    <- built-in: True when SNMP agent reachable
+          device_connected                 <- built-in: True when SNMP agent reachable
           device_state                     <- built-in: 0=offline 1=online
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
@@ -104,13 +104,13 @@ import time
 from dataclasses import dataclass, field
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+import datetime
 from typing import Any, ClassVar, Dict, List, Optional
 
 # ── bridge imports ────────────────────────────────────────────────────────────
 try:
     from snmp_asyncua_bridge import (
-        NodeSpec,
+        NodeStore,
         OPCUAServer,
         SNMPPoller,
         _cast_to_ua,
@@ -506,12 +506,14 @@ class UCTSPoller(SNMPPoller):
         if entry is None:
             log.error("set_tai_offset: tai_offset not found in store")
             return
-        entry.data_value = _good_dv(int(offset), "Int32")
+        entry.data_value = _good_dv(int(offset), "Int32", datetime.datetime.now(datetime.timezone.utc))
+        entry.timestamp = time.monotonic()
+        entry.updated_since_write = True
         log.info("TAI offset updated to %d s", offset)
 
     # ── write_variables ───────────────────────────────────────────────────────
 
-    async def write_variables(self) -> None:
+    async def write_variables(self, write_all_values: bool = False) -> None:
         """
         Compute derived store entries then delegate to super() for OPC UA writes.
 
@@ -520,8 +522,8 @@ class UCTSPoller(SNMPPoller):
 
         Derived variables (DstMacAddr, Status, State, FirmwareVersion)
         ---------------------------------------------------------------
-        Recomputed only when all source OIDs have ``updated_this_cycle=True``.
-        On recompute: ``updated_this_cycle``, ``timestamp``, and ``next_cycle``
+        Recomputed only when all source OIDs have ``updated_since_write=True``.
+        On recompute: ``updated_since_write``, ``timestamp``, and ``next_cycle``
         (set to min of sources) are propagated to the derived entry.
         ``_apply_staleness`` is then called unconditionally when
         ``_polling_cycle >= entry.next_cycle``, mirroring the base-class
@@ -529,7 +531,7 @@ class UCTSPoller(SNMPPoller):
 
         In-place transformations (PortLinkStatus, TimeTAIString)
         ---------------------------------------------------------
-        Gated on ``updated_this_cycle`` so they only fire when a fresh SNMP
+        Gated on ``updated_since_write`` so they only fire when a fresh SNMP
         value arrived this cycle.
         """
         now = time.monotonic()
@@ -539,7 +541,7 @@ class UCTSPoller(SNMPPoller):
         lsb_entry = self._store["_DstMacAddr_16LSB"]
         mac_entry = self._store["DstMacAddr"]
 
-        if msb_entry.updated_this_cycle and lsb_entry.updated_this_cycle:
+        if msb_entry.updated_since_write and lsb_entry.updated_since_write:
             try:
                 # SourceTimestamp is the earlier of the two sources — the derived
                 # value is only as fresh as its oldest input.
@@ -557,7 +559,7 @@ class UCTSPoller(SNMPPoller):
                     ), "String", src_ts
                 )
                 mac_entry.timestamp          = now
-                mac_entry.updated_this_cycle = True
+                mac_entry.updated_since_write = True
                 mac_entry.next_cycle         = min(
                     msb_entry.next_cycle, lsb_entry.next_cycle
                 )
@@ -572,7 +574,7 @@ class UCTSPoller(SNMPPoller):
         state_entry  = self._store["State"]
         fw_entry     = self._store["FirmwareVersion"]
 
-        if raw_entry.updated_this_cycle:
+        if raw_entry.updated_since_write:
             try:
                 status_int = _octetstr_to_uint32(bytes(raw_entry.data_value.Value.Value))
                 src_ts = raw_entry.data_value.SourceTimestamp
@@ -583,7 +585,7 @@ class UCTSPoller(SNMPPoller):
                 ):
                     entry.data_value         = _good_dv(val, entry.opcua_type, src_ts)
                     entry.timestamp          = now
-                    entry.updated_this_cycle = True
+                    entry.updated_since_write = True
                     entry.next_cycle         = raw_entry.next_cycle
             except Exception as exc:
                 log.warning("Status decode error: %s", exc)
@@ -597,7 +599,7 @@ class UCTSPoller(SNMPPoller):
 
         # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
         pls_entry = self._store["PortLinkStatus"]
-        if pls_entry.updated_this_cycle:
+        if pls_entry.updated_since_write:
             try:
                 pls_entry.data_value = _good_dv(
                     {0: "na", 1: "down", 2: "up"}.get(
@@ -609,7 +611,7 @@ class UCTSPoller(SNMPPoller):
 
         # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
         tai_entry = self._store["TimeTAIString"]
-        if tai_entry.updated_this_cycle:
+        if tai_entry.updated_since_write:
             try:
                 s = str(tai_entry.data_value.Value.Value)
                 if "T" not in s:
@@ -622,7 +624,7 @@ class UCTSPoller(SNMPPoller):
             except Exception as exc:
                 log.warning("TimeTAIString reformat error: %s", exc)
 
-        await super().write_variables()
+        await super().write_variables(write_all_values)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
