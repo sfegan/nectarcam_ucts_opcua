@@ -73,9 +73,9 @@ _MONITORING_VARS = [
     "Throttle", "TimeTAI", "TimeTAIString", "UpTime",
     "WrpcSwVersion", "SoftwareVersion", "tai_offset",
     # Built-in server variables
-    "snmp_host", "snmp_port", "snmp_polling_timestamp", "snmp_polling_age",
-    "snmp_polling_interval", "snmp_polling_success_count",
-    "snmp_server_online", "device_state",
+    "device_host", "device_port", "device_command_port", "device_polling_interval",
+    "device_connected", "device_connection_uptime", "device_connection_downtime", 
+    "device_state",
 ]
 
 _METHODS = [
@@ -195,9 +195,9 @@ class UCTSClient:
                 dv = await self.read_var(name)
                 val = dv.Value.Value if dv.Value else None
                 sc = dv.StatusCode_
-                print(f"  {name:20s} = {val!r:30s}  [{sc}]")
+                print(f"  {name:30s} = {val!r:30s}  [{sc}]")
             except Exception as exc:
-                print(f"  {name:20s}  ERROR: {exc}")
+                print(f"  {name:30s}  ERROR: {exc}")
 
     # ── subscribe ─────────────────────────────────────────────────────────────
 
