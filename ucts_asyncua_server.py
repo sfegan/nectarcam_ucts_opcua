@@ -89,7 +89,7 @@ Usage
 
 Dependencies
 ------------
-  pip install pysnmp-lextudio asyncua
+  pip install pysnmp asyncua
   snmp_asyncua_bridge.py must be importable (same directory or on PYTHONPATH)
 """
 
