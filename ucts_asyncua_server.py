@@ -10,8 +10,8 @@ Three-class design, each with a single responsibility:
         - compute derived store entries (DstMacAddr, Status, State,
           FirmwareVersion) from local OIDs when their
           sources are Good, or delegate to self._apply_staleness() when not.
-        - apply in-place transformations to PortLinkStatus (INTEGER → string)
-          and TimeTAIString (ISO 8601 separator normalisation).
+        - apply in-place transformations to TimeTAIString (ISO 8601 
+          separator normalisation).
         - call super().write_variables() to perform the actual OPC UA writes.
 
   UCTSCommander
@@ -219,9 +219,10 @@ _UCTS_CONFIG: dict = {
         {
             "oid":         "1.3.6.1.4.1.96.101.1.7.1.0",
             "opcua_name":  "PortLinkStatus",
-            "opcua_type":  "String",
+            "opcua_type":  "Enum",
             "description": "Port link status",
             "poll_every":  60,
+            "enum":        { "0": "na", "1": "down", "2": "up" },
         },
         {
             # wrpcTemperatureValue — MIB SYNTAX is DisplayString, device sends
@@ -406,7 +407,6 @@ class UCTSPoller(SNMPPoller):
         · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
         · _RawStatus  →  Status (Int64), State (Int32), FirmwareVersion (String)
     - Apply in-place transformations to published OIDs:
-        · PortLinkStatus: INTEGER enum  →  "na" / "down" / "up"
         · TimeTAIString: reformat to ISO 8601 T separator
     - When a source OID is not Good this cycle, delegate to
       self._apply_staleness() on the derived entry so staleness and lifetime
@@ -428,7 +428,6 @@ class UCTSPoller(SNMPPoller):
         "Status":          "Int64",
         "State":           "Int32",
         "FirmwareVersion": "String",
-        "PortLinkStatus":  "String",
         "TimeTAIString":   "String",
     }
 
@@ -534,7 +533,7 @@ class UCTSPoller(SNMPPoller):
         ``_polling_cycle >= entry.next_cycle``, mirroring the base-class
         behaviour for polled OIDs.
 
-        In-place transformations (PortLinkStatus, TimeTAIString)
+        In-place transformations (TimeTAIString)
         ---------------------------------------------------------
         Gated on ``updated_since_write`` so they only fire when a fresh SNMP
         value arrived this cycle.
@@ -601,18 +600,6 @@ class UCTSPoller(SNMPPoller):
         ):
             if self._polling_cycle >= entry.next_cycle:
                 self._apply_staleness(name, entry, now)
-
-        # ── PortLinkStatus: INTEGER enum → "na" / "down" / "up" ──────────────
-        pls_entry = self._store["PortLinkStatus"]
-        if pls_entry.updated_since_write:
-            try:
-                pls_entry.data_value = _good_dv(
-                    {0: "na", 1: "down", 2: "up"}.get(
-                        int(pls_entry.data_value.Value.Value), "down"
-                    ), "String", pls_entry.data_value.SourceTimestamp
-                )
-            except (ValueError, TypeError) as exc:
-                log.warning("PortLinkStatus conversion error: %s", exc)
 
         # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
         tai_entry = self._store["TimeTAIString"]
