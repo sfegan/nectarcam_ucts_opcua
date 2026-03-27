@@ -94,9 +94,9 @@ These identifiers survive server restarts and are stable across re-deployments. 
 | `device_host` | String | IP address of the SNMP device |
 | `device_port` | UInt16 | SNMP UDP port |
 | `device_command_port` | UInt16 | Port number for UDP device commands (default: `55010`) |
-| `device_polling_interval` | Double | Current polling interval in seconds |
-| `device_connection_downtime` | Double | Seconds since the last successful SNMP poll; `0.0` while connected |
-| `device_connection_uptime` | Double | Seconds elapsed since the device last came online; `0.0` while offline |
+| `device_polling_interval` | Double | Current polling interval in milliseconds |
+| `device_connection_downtime` | Double | Milliseconds since the last successful SNMP poll; `0.0` while connected |
+| `device_connection_uptime` | Double | Milliseconds elapsed since the device last came online; `0.0` while offline |
 | `device_connected` | Boolean | `True` when the SNMP agent is reachable |
 | `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online, `2` = running |
 
