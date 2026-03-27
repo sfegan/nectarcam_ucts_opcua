@@ -44,7 +44,7 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           EventCount
           FirmwareVersion  <- derived: from Status bits 23:16
           PortLinkStatus   <- transformed: INTEGER enum → "na"/"down"/"up"
-          State            <- derived: from Status bit 7
+          State            <- 0=standby 1=running (derived: from Status bit 7)
           Status           <- derived: raw uint32 as Int64
           Temperature      <- polled: DisplayString decoded to Float °C directly
           Throttle
@@ -55,11 +55,12 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           SoftwareVersion  <- constant
           device_host                      <- built-in: SNMP device IP
           device_port                      <- built-in: SNMP port
-          device_polling_interval          <- built-in: poll interval in seconds
-          device_connection_downtime       <- built-in: seconds since last successful poll; 0.0 while connected
-          device_connection_uptime         <- built-in: seconds since device last came online; 0.0 while offline
-          device_connected                 <- built-in: True when SNMP agent reachable
-          device_state                     <- built-in: 0=offline 1=online
+          device_command_port              <- built-in: UDP command port
+          device_polling_interval          <- built-in: poll interval in milliseconds
+          device_connection_downtime       <- built-in: milliseconds since last successful poll; 0.0 while connected
+          device_connection_uptime         <- built-in: milliseconds since device last came online; 0.0 while offline
+          device_connected                 <- built-in: True when UCTS SNMP agent reachable
+          device_state                     <- built-in: 0=offline 1=online 2=online+running (derived from State)
 
   Internal (local) OIDs — polled and held in self._store, no OPC UA node:
       _DstMacAddr_32MSB    <- 4 MSB of destination MAC (ByteString)
@@ -237,7 +238,7 @@ _UCTS_CONFIG: dict = {
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
             "opcua_name":  "TimeTAI",
             "opcua_type":  "Int64",
-            "description": "TAI time",
+            "description": "The current time, in TAI seconds since the epoch (1970-01-01T00:00:00Z)",
             "poll_every":  10,
         },
         {
@@ -251,7 +252,7 @@ _UCTS_CONFIG: dict = {
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
             "opcua_type":  "String",
-            "description": "Uptime of the UCTS (formatted string, e.g. '5:23:49.160000')",
+            "description": "Uptime of the UCTS (formatted string, e.g. '2 days, 5:23:49.160000')",
             "poll_every":  10,
         },
         {
