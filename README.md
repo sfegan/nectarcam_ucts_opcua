@@ -8,10 +8,17 @@ OPC UA server bridge for the **UCTS (Universal Clock and Time Stamping)** contro
 pip install pysnmp asyncua
 ```
 
-The server also requires the `snmp_asyncua_bridge` module from [nectarcam_snmp_opcua](https://github.com/sfegan/nectarcam_snmp_opcua):
+The server also requires the `snmp_asyncua_bridge` module from GitHub [nectarcam_snmp_opcua](https://github.com/sfegan/nectarcam_snmp_opcua), or from the CTAO Gitlab [snmp_asyncua_bridge](https://gitlab.cta-observatory.org/cta-array-elements/mst/nectarcam/software/network/snmp_asyncua_bridge):
 
 ```bash
 git clone https://github.com/sfegan/nectarcam_snmp_opcua.git
+export PYTHONPATH="/path/to/nectarcam_snmp_opcua:$PYTHONPATH"
+```
+
+or
+
+```bash
+git clone git@gitlab.cta-observatory.org:cta-array-elements/mst/nectarcam/software/network/snmp_asyncua_bridge.git
 export PYTHONPATH="/path/to/nectarcam_snmp_opcua:$PYTHONPATH"
 ```
 
