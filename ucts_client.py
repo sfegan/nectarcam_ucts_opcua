@@ -3,6 +3,9 @@ ucts_client.py
 ──────────────
 Interactive OPC UA test client for the UCTS server.
 
+Copyright 2026, Stephen Fegan <sfegan@llr.in2p3.fr>
+Laboratoire Leprince-Ringuet, CNRS/IN2P3, Ecole Polytechnique, Institut Polytechnique de Paris
+
 Connects to the UCTS OPC UA server and provides:
   • Read any monitoring variable
   • Call any ICD method (Configure, Start, Reset, etc.)

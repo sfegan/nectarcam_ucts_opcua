@@ -3,6 +3,9 @@ ucts_emulator.py
 ────────────────
 Interactive emulator for the UCTS-TiCkS board.
 
+Copyright 2026, Stephen Fegan <sfegan@llr.in2p3.fr>
+Laboratoire Leprince-Ringuet, CNRS/IN2P3, Ecole Polytechnique, Institut Polytechnique de Paris
+
 Runs three concurrent services:
   1. SNMP agent   -- serves all UCTS OIDs over SNMPv2c (default port 1161)
                      Supports GET and GETNEXT (so snmpwalk works).

@@ -3,6 +3,9 @@ ucts_asyncua_server.py
 ──────────────────────
 OPC UA server for the UCTS (Universal Clock and Time Stamping) controller.
 
+Copyright 2026, Stephen Fegan <sfegan@llr.in2p3.fr>
+Laboratoire Leprince-Ringuet, CNRS/IN2P3, Ecole Polytechnique, Institut Polytechnique de Paris
+
 Three-class design, each with a single responsibility:
 
   UCTSPoller(SNMPPoller)
