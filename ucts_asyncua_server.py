@@ -221,7 +221,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "PortLinkStatus",
             "opcua_type":  "Enum",
             "description": "Port link status",
-            "poll_every":  60,
+            "poll_every":  10,
             "enum":        { "0": "na", "1": "down", "2": "up" },
         },
         {
