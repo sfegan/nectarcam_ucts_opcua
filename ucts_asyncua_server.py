@@ -165,18 +165,21 @@ _UCTS_CONFIG: dict = {
         # Primary monitoring data set - poll every cycle
         # #####################################################################
         {
+            # AUX-DIAG::wrpcAuxDiagBusyCnt.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
             "opcua_name":  "BusyCount",
             "opcua_type":  "Int32",
             "description": "Number of busy triggers rejected during the run",
         },
         {
+            # AUX-DIAG::wrpcAuxDiagEventCnt.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.7.1",
             "opcua_name":  "EventCount",
             "opcua_type":  "Int32",
             "description": "Number of triggers accepted during the run",
         },
         {
+            # AUX-DIAG::wrpcAuxDiagStatus.1
             # wrpcAuxDiagStatus — ASN_OCTET_STR encoding a uint32 bitmask.
             # Declared ByteString so _cast_to_ua leaves raw bytes intact.
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
@@ -188,6 +191,7 @@ _UCTS_CONFIG: dict = {
         # Secondary monitoring data set - poll every 10 cycles (10 seconds)
         # #####################################################################
         {
+            # WR-WRPC-MIB::wrpcPortLinkStatus.0
             "oid":         "1.3.6.1.4.1.96.101.1.7.1.0",
             "opcua_name":  "PortLinkStatus",
             "opcua_type":  "Enum",
@@ -196,6 +200,7 @@ _UCTS_CONFIG: dict = {
             "enum":        { "0": "na", "1": "down", "2": "up" },
         },
         {
+            # WR-WRPC-MIB::wrpcTemperatureValue.1
             # wrpcTemperatureValue — MIB SYNTAX is DisplayString, device sends
             # a decimal float string e.g. "41.9375" (degrees C directly).
             # The bridge's _cast_to_ua() decodes the bytes to str before
@@ -207,6 +212,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  10,
         },
         {
+            # WR-WRPC-MIB::wrpcTimeTAI.0
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
             "opcua_name":  "TimeTAI",
             "opcua_type":  "Int64",
@@ -214,6 +220,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  10,
         },
         # {
+        #     # WR-WRPC-MIB::wrpcTimeTAIString.0
         #     # Removed as unnecessary after discussion with Michael Punch via email (2026-04-01)
         #     "oid":         "1.3.6.1.4.1.96.101.1.2.2.0",
         #     "opcua_name":  "TimeTAIString",
@@ -222,6 +229,7 @@ _UCTS_CONFIG: dict = {
         #     "poll_every":  10,
         # },
         {
+            # WRPC-MIB::wrpcTimeSystemUptime.0
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
             "opcua_type":  "Double",
@@ -232,6 +240,7 @@ _UCTS_CONFIG: dict = {
         # Tertiary monitoring data set - poll every 180 cycles (3 minutes)
         # #####################################################################
         {
+            # AUX-DIAG::wrpcAuxDiagDstIpAddr.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.3.1",
             "opcua_name":  "DstIpAddr",
             "opcua_type":  "String",
@@ -239,6 +248,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  180,
         },
         {
+            # AUX-DIAG::wrpcAuxDiagDstMacAddrH.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
             "opcua_name":  "_DstMacAddr_32MSB",
             "opcua_type":  "ByteString",
@@ -246,6 +256,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  180,
         },
         {
+            # AUX-DIAG::wrpcAuxDiagDstMacAddrL.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
             "opcua_name":  "_DstMacAddr_16LSB",
             "opcua_type":  "ByteString",
@@ -253,6 +264,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  180,
         },
         {
+            # AUX-DIAG::wrpcAuxDiagDstPort.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
             "opcua_name":  "DstPort",
             "opcua_type":  "UInt16",
@@ -260,6 +272,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  180,
         },
         {
+            # AUX-DIAG::wrpcAuxDiagThrottle.1
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
             "opcua_name":  "Throttle",
             "opcua_type":  "Int64",
@@ -267,6 +280,7 @@ _UCTS_CONFIG: dict = {
             "poll_every":  180,
         },
         {
+            # WR-WRPC-MIB::wrpcVersionSwVersion.0
             "oid":         "1.3.6.1.4.1.96.101.1.1.2.0",
             "opcua_name":  "WrpcSwVersion",
             "opcua_type":  "String",
