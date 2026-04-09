@@ -13,8 +13,6 @@ Three-class design, each with a single responsibility:
         - compute derived store entries (DstMacAddr, Status, State,
           FirmwareVersion) from local OIDs when their
           sources are Good, or delegate to self._apply_staleness() when not.
-        - apply in-place transformations to TimeTAIString (ISO 8601 
-          separator normalisation).
         - call super().write_variables() to perform the actual OPC UA writes.
 
   UCTSCommander
@@ -52,8 +50,7 @@ Node layout (root_path="UCTS", opcua_path="Monitoring"):
           Temperature      <- polled: DisplayString decoded to Float °C directly
           Throttle
           TimeTAI
-          TimeTAIString    <- transformed: ISO 8601 with T separator
-          UpTime           <- polled: timedelta → formatted String (e.g. "5:23:49.160000")
+          UpTime
           WrpcSwVersion
           SoftwareVersion  <- constant
           device_host                      <- built-in: SNMP device IP
@@ -164,39 +161,14 @@ _UCTS_CONFIG: dict = {
     "default_lifetime":     60,
     "oids_per_get":         1,               # required by WR mini SMNP server
     "oids": [
+        # #####################################################################
+        # Primary monitoring data set - poll every cycle
+        # #####################################################################
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.8.1",
             "opcua_name":  "BusyCount",
             "opcua_type":  "Int32",
             "description": "Number of busy triggers rejected during the run",
-        },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.3.1",
-            "opcua_name":  "DstIpAddr",
-            "opcua_type":  "String",
-            "description": "Destination IP address of UCTS timestamps",
-            "poll_every":  60,
-        },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
-            "opcua_name":  "_DstMacAddr_32MSB",
-            "opcua_type":  "ByteString",
-            "description": "(internal) 32 MSB of destination MAC address",
-            "poll_every":  60,
-        },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
-            "opcua_name":  "_DstMacAddr_16LSB",
-            "opcua_type":  "ByteString",
-            "description": "(internal) 16 LSB of destination MAC address",
-            "poll_every":  60,
-        },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
-            "opcua_name":  "DstPort",
-            "opcua_type":  "UInt16",
-            "description": "Destination port of UCTS timestamps",
-            "poll_every":  60,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.7.1",
@@ -212,13 +184,9 @@ _UCTS_CONFIG: dict = {
             "opcua_type":  "ByteString",
             "description": "(internal) raw uint32 status word as bytes",
         },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
-            "opcua_name":  "Throttle",
-            "opcua_type":  "Int64",
-            "description": "Throttle parameter of UCTS TiCkS",
-            "poll_every":  60,
-        },
+        # #####################################################################
+        # Secondary monitoring data set - poll every 10 cycles (10 seconds)
+        # #####################################################################
         {
             "oid":         "1.3.6.1.4.1.96.101.1.7.1.0",
             "opcua_name":  "PortLinkStatus",
@@ -245,26 +213,65 @@ _UCTS_CONFIG: dict = {
             "description": "The current time, in TAI seconds since the epoch (1970-01-01T00:00:00Z)",
             "poll_every":  10,
         },
-        {
-            "oid":         "1.3.6.1.4.1.96.101.1.2.2.0",
-            "opcua_name":  "TimeTAIString",
-            "opcua_type":  "String",
-            "description": "TAI time string (ISO 8601)",
-            "poll_every":  10,
-        },
+        # {
+        #     # Removed as unnecessary after discussion with Michael Punch via email (2026-04-01)
+        #     "oid":         "1.3.6.1.4.1.96.101.1.2.2.0",
+        #     "opcua_name":  "TimeTAIString",
+        #     "opcua_type":  "String",
+        #     "description": "TAI time string (ISO 8601)",
+        #     "poll_every":  10,
+        # },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
-            "opcua_type":  "String",
-            "description": "Uptime of the UCTS (formatted string, e.g. '2 days, 5:23:49.160000')",
+            "opcua_type":  "Double",
+            "description": "Uptime of the UCTS in milliseconds",
             "poll_every":  10,
+        },
+        # #####################################################################
+        # Tertiary monitoring data set - poll every 180 cycles (3 minutes)
+        # #####################################################################
+        {
+            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.3.1",
+            "opcua_name":  "DstIpAddr",
+            "opcua_type":  "String",
+            "description": "Destination IP address of UCTS timestamps",
+            "poll_every":  180,
+        },
+        {
+            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.4.1",
+            "opcua_name":  "_DstMacAddr_32MSB",
+            "opcua_type":  "ByteString",
+            "description": "(internal) 32 MSB of destination MAC address",
+            "poll_every":  180,
+        },
+        {
+            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.5.1",
+            "opcua_name":  "_DstMacAddr_16LSB",
+            "opcua_type":  "ByteString",
+            "description": "(internal) 16 LSB of destination MAC address",
+            "poll_every":  180,
+        },
+        {
+            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.6.1",
+            "opcua_name":  "DstPort",
+            "opcua_type":  "UInt16",
+            "description": "Destination port of UCTS timestamps",
+            "poll_every":  180,
+        },
+        {
+            "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.10.1",
+            "opcua_name":  "Throttle",
+            "opcua_type":  "Int64",
+            "description": "Throttle parameter of UCTS TiCkS",
+            "poll_every":  180,
         },
         {
             "oid":         "1.3.6.1.4.1.96.101.1.1.2.0",
             "opcua_name":  "WrpcSwVersion",
             "opcua_type":  "String",
             "description": "Version of the wrpc software",
-            "poll_every":  60,
+            "poll_every":  180,
         },
     ],
     "constants": [
@@ -272,7 +279,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "SoftwareVersion",
             "opcua_type":  "String",
             "description": "Version of the UCTS controller",
-            "value":       "2.0.0",
+            "value":       "2.0.1",
         },
         {
             "opcua_name":  "tai_offset",
@@ -409,8 +416,6 @@ class UCTSPoller(SNMPPoller):
     - Compute derived store entries from local OIDs each cycle:
         · _DstMacAddr_32MSB + _DstMacAddr_16LSB  →  DstMacAddr  (String)
         · _RawStatus  →  Status (Int64), State (Int32), FirmwareVersion (String)
-    - Apply in-place transformations to published OIDs:
-        · TimeTAIString: reformat to ISO 8601 T separator
     - When a source OID is not Good this cycle, delegate to
       self._apply_staleness() on the derived entry so staleness and lifetime
       expiry are handled consistently for both polled and derived variables.
@@ -431,7 +436,6 @@ class UCTSPoller(SNMPPoller):
         "Status":          "Int64",
         "State":           "Int32",
         "FirmwareVersion": "String",
-        "TimeTAIString":   "String",
     }
 
     async def on_address_space_ready(self) -> None:
@@ -535,8 +539,6 @@ class UCTSPoller(SNMPPoller):
         ``_apply_staleness`` is then called unconditionally when
         ``_polling_cycle >= entry.next_cycle``, mirroring the base-class
         behaviour for polled OIDs.
-
-        In-place transformations (TimeTAIString)
         ---------------------------------------------------------
         Gated on ``updated_since_write`` so they only fire when a fresh SNMP
         value arrived this cycle.
@@ -603,21 +605,6 @@ class UCTSPoller(SNMPPoller):
         ):
             if self._polling_cycle >= entry.next_cycle:
                 self._apply_staleness(name, entry, now)
-
-        # ── TimeTAIString: "2024-12-10-13:22:50" → "2024-12-10T13:22:50" ─────
-        tai_entry = self._store["TimeTAIString"]
-        if tai_entry.updated_since_write:
-            try:
-                s = str(tai_entry.data_value.Value.Value)
-                if "T" not in s:
-                    pos = s.rfind("-")
-                    if pos != -1:
-                        s = s[:pos] + "T" + s[pos + 1:]
-                tai_entry.data_value = _good_dv(
-                    s, "String", tai_entry.data_value.SourceTimestamp
-                )
-            except Exception as exc:
-                log.warning("TimeTAIString reformat error: %s", exc)
 
         # -- device_state: set to 2 if online and running --
         device_state_entry = self._store["device_state"]
