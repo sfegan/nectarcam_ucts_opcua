@@ -343,6 +343,14 @@ class UCTSState:
         # ── SNMP statistics counters (1.3.6.1.2.1.11.*) ──────────────────────
         self.snmp_in_pkts:  int = 0
         self.snmp_out_pkts: int = 0
+        self.snmp_in_bytes: int = 0
+        self.snmp_out_bytes: int = 0
+
+        # ── Command statistics counters ──────────────────────────────────────
+        self.cmd_in_pkts:   int = 0
+        self.cmd_out_pkts:  int = 0
+        self.cmd_in_bytes:  int = 0
+        self.cmd_out_bytes: int = 0
 
     # ── derived ───────────────────────────────────────────────────────────────
 
@@ -554,6 +562,12 @@ class UCTSState:
             f"  ifOperStatus    : {self.if_oper_status}  (1=up, 2=down)",
             f"  snmpInPkts      : {self.snmp_in_pkts}",
             f"  snmpOutPkts     : {self.snmp_out_pkts}",
+            f"  snmpInBytes     : {self.snmp_in_bytes}",
+            f"  snmpOutBytes    : {self.snmp_out_bytes}",
+            f"  cmdInPkts       : {self.cmd_in_pkts}",
+            f"  cmdOutPkts      : {self.cmd_out_pkts}",
+            f"  cmdInBytes      : {self.cmd_in_bytes}",
+            f"  cmdOutBytes     : {self.cmd_out_bytes}",
         ])
 
 
@@ -578,12 +592,14 @@ class SNMPAgentProtocol(asyncio.DatagramProtocol):
         if parsed is None:
             log.debug("SNMP: ignored non-GET/GETNEXT packet from %s", addr)
             return
+
+        state.snmp_in_pkts += 1
+        state.snmp_in_bytes += len(data)
+
         version, community, request_id, pdu_type, oids = parsed
         log.debug("SNMP %s from %s  req_id=%d  oids=%d",
                   "GET" if pdu_type == _T_GET_REQ else "GETNEXT",
                   addr, request_id, len(oids))
-
-        state.snmp_in_pkts += 1
 
         var_binds: List[Tuple[Tuple[int, ...], bytes]] = []
         for oid in oids:
@@ -608,6 +624,7 @@ class SNMPAgentProtocol(asyncio.DatagramProtocol):
 
         response = _build_response(community, request_id, var_binds)
         state.snmp_out_pkts += 1
+        state.snmp_out_bytes += len(response)
         self._transport.sendto(response, addr)
 
     def error_received(self, exc: Exception) -> None:
@@ -635,6 +652,10 @@ class TiCkSCommandProtocol(asyncio.DatagramProtocol):
         if len(data) != 8:
             log.warning("CMD: unexpected length %d from %s", len(data), addr)
             return
+
+        state.cmd_in_pkts += 1
+        state.cmd_in_bytes += len(data)
+
         word = int.from_bytes(data, "big")
         log.info("CMD recv: %s from %s", data.hex().upper(), addr)
 
@@ -665,12 +686,61 @@ class TiCkSCommandProtocol(asyncio.DatagramProtocol):
             else:
                 log.warning("CMD: unknown function 0x%X", func)
 
+        state.cmd_out_pkts += 1
+        state.cmd_out_bytes += len(data)
         self._transport.sendto(data, addr)   # echo-back acknowledge
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Background: TAI time updater
+# Background: Watchdog and TAI time updater
 # ─────────────────────────────────────────────────────────────────────────────
+
+async def _network_watchdog() -> None:
+    """
+    Watchdog timer that prints network statistics every 5 minutes.
+    Overhead: Ethernet (14) + IP (20) + UDP (8) = 42 bytes per packet.
+    """
+    interval = 300.0
+    prev_time = time.monotonic()
+
+    while True:
+        await asyncio.sleep(interval)
+        now = time.monotonic()
+        dt = now - prev_time
+
+        # Snapshot of current state
+        s_in_p, s_out_p = state.snmp_in_pkts, state.snmp_out_pkts
+        s_in_b, s_out_b = state.snmp_in_bytes, state.snmp_out_bytes
+        c_in_p, c_out_p = state.cmd_in_pkts, state.cmd_out_pkts
+        c_in_b, c_out_b = state.cmd_in_bytes, state.cmd_out_bytes
+
+        # Zero the counts for the next interval
+        state.snmp_in_pkts = 0
+        state.snmp_out_pkts = 0
+        state.snmp_in_bytes = 0
+        state.snmp_out_bytes = 0
+        state.cmd_in_pkts = 0
+        state.cmd_out_pkts = 0
+        state.cmd_in_bytes = 0
+        state.cmd_out_bytes = 0
+
+        total_pkts = s_in_p + s_out_p + c_in_p + c_out_p
+        total_payload_bytes = s_in_b + s_out_b + c_in_b + c_out_b
+        total_bytes_all = total_payload_bytes + (total_pkts * 42)
+
+        # Bandwidth over the last interval
+        bandwidth_kbps = (total_bytes_all * 8 / 1000.0) / dt if dt > 0 else 0
+
+        log.info(
+            f"Network Watchdog Statistics (last {dt/60:.1g} min):\n"
+            f"  SNMP Packets: Received={s_in_p:,d}, Sent={s_out_p:,d}\n"
+            f"  CMD Packets:  Received={c_in_p:,d}, Sent={c_out_p:,d}\n"
+            f"  Total Payload Bytes: {total_payload_bytes:,d}\n"
+            f"  Total Bytes (inc. UDP/IP/MAC headers): {total_bytes_all:,d}\n"
+            f"  Estimated Bandwidth (w/headers): {bandwidth_kbps:.3f} kbit/s")
+
+        prev_time = now
+
 
 async def _update_time() -> None:
     while True:
@@ -938,15 +1008,17 @@ async def _async_main() -> None:
             log.debug("Cmd bind %s:%d skipped: %s", bind_addr, args.cmd_port, exc)
 
     time_task = asyncio.create_task(_update_time())
-    term_task  = asyncio.create_task(_terminal_loop(stop_event))
+    wd_task   = asyncio.create_task(_network_watchdog())
+    term_task = asyncio.create_task(_terminal_loop(stop_event))
 
     await stop_event.wait()
 
     time_task.cancel()
+    wd_task.cancel()
     term_task.cancel()
     for t in snmp_transports: t.close()
     for t in cmd_transports:  t.close()
-    await asyncio.gather(time_task, term_task, return_exceptions=True)
+    await asyncio.gather(time_task, wd_task, term_task, return_exceptions=True)
     log.info("Emulator stopped")
 
 
