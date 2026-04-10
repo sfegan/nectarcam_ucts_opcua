@@ -304,15 +304,15 @@ class UCTSState:
 
     def __init__(self) -> None:
         self._ticks_state: int = 0       # 0=Online, 1=Running, 2=Unknown
-        self._fw_version:  int = 1
-        self._spi_enabled: bool = True
+        self._fw_version:  int = 0x10
+        self._spi_enabled: bool = False
         self.dst_ip:       str   = "10.10.3.250"
         self.dst_mac_h:    bytes = b"\x44\xa8\x42\x44"   # 4 MSB
         self.dst_mac_l:    bytes = b"\x32\xc9"           # 2 LSB
         self.dst_port:     int   = 55000
         self.event_count:  int   = 0
         self.busy_count:   int   = 0
-        self.throttle:     int   = 0xFFFF
+        self.throttle:     int   = 0
         self.temperature:  float = 25.6   # degrees C, sent as DisplayString
         self.port_link_status: int = 2    # 2=up
         self.wrpc_sw_version: str = "wrpc-v4.2-dirty"
@@ -383,11 +383,11 @@ class UCTSState:
 
     @property
     def status_word(self) -> int:
-        w = 0
+        w = 0x06008000 # Base bits from hardware walk (bits 26,25,15)
         if self._ticks_state == 1:   # Running: cnt_en_ack=1
             w |= (1 << 7)
         elif self._ticks_state == 0: # Online: non-zero but bit7=0
-            w |= (1 << 0)
+            w |= 0x06  # Bits 1,2 set in Byte 0 in hardware walk
         w |= (self._fw_version & 0xFF) << 16
         if self._spi_enabled:
             w |= (1 << 4)
