@@ -180,3 +180,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 .DS_Store
+snmpwalk_ticks.txt
+snmpwalk_ticks_qm.txt
