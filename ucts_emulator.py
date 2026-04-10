@@ -109,18 +109,14 @@ def _ber_int(value: int) -> bytes:
     """Encode a signed integer in the minimum number of bytes."""
     if value == 0:
         return _ber_tlv(_T_INTEGER, b"\x00")
-    n = value
-    result = []
-    while n not in (0, -1):
-        result.append(n & 0xFF)
-        n >>= 8
-    # Extend sign
-    if value > 0 and (result[-1] & 0x80):
-        result.append(0x00)
-    elif value < 0 and not (result[-1] & 0x80):
-        result.append(0xFF)
-    result.reverse()
-    return _ber_tlv(_T_INTEGER, bytes(result))
+    # Determine the minimum number of bytes required for a signed integer
+    n = 1
+    while True:
+        try:
+            raw = value.to_bytes(n, "big", signed=True)
+            return _ber_tlv(_T_INTEGER, raw)
+        except OverflowError:
+            n += 1
 
 
 def _ber_uint_app(tag: int, value: int, width: int) -> bytes:
@@ -325,13 +321,44 @@ class UCTSState:
         self.wrpc_build_date: str = "Jan  1 2025 00:00:00"
         self.temperature_name: str = "pcb"
         self.spll_mode:       int = 3   # 3=slave
-        self.spll_irq_cnt:    int = 0
+        self.spll_irq_cnt:    int = 30099970
         self.spll_seq_state:  int = 8   # 8=ready
-        self.sfp_pn:          bytes = b"BO15C3149620D   "  # 16 bytes
+        self.spll_align_state: int = 0  # 0=extOff
+        self.spll_hlock:      int = 1
+        self.spll_mlock:      int = 1
+        self.spll_hy:         int = 26546
+        self.spll_my:         int = 44134
+        self.spll_del_cnt:    int = 0
+        self.ptp_servo_state_n: int = 4 # 4=trackPhase
+        self.ptp_clock_offset_ps_hr: int = -3
+        self.ptp_skew:         int = -1
+        self.ptp_rtt:          int = 1214691
+        self.ptp_servo_updates: int = 3904
+        self.ptp_servo_update_time: int = 1775751047581192208
+        self.ptp_delta_tx_m:   int = 239356
+        self.ptp_delta_rx_m:   int = 278398
+        self.ptp_delta_tx_s:   int = 0
+        self.ptp_delta_rx_s:   int = 0
+        self.ptp_servo_state_err_cnt: int = 6
+        self.ptp_clock_offset_err_cnt: int = 5
+        self.ptp_rtt_err_cnt:  int = 1
+        self.ptp_asymmetry:    int = 0
+        self.ptp_tx:           int = 8000
+        self.ptp_rx:           int = 17887
+        self.ptp_alpha:        int = 0
+        self.ptp_group_27:     int = 0
+        self.ptp_config_restart: int = 0 # 0=na
+        self.ptp_config_apply:   int = 0 # 0=na
+        self.ptp_config_sfp_pn:  str = ""
+        self.ptp_config_delta_tx: int = 0
+        self.ptp_config_delta_rx: int = 0
+        self.ptp_config_alpha:    int = 0
+        self.sfp_pn:          bytes = b"LS38-C3S-TC-N-B9"  # 16 bytes
         self.sfp_in_db:       int = 1   # 1=notInDataBase
-        self.port_internal_tx: int = 0
-        self.port_internal_rx: int = 0
+        self.port_internal_tx: int = 12767
+        self.port_internal_rx: int = 50921
         self.aux_diag_ro_reg_nb: int = 8
+        self.aux_diag_rw_reg_nb: int = 0
         self.time_tai: int = int(time.time()) + 37
 
         # ── Standard MIB-II system group (1.3.6.1.2.1.1.*) ───────────────────
@@ -424,6 +451,39 @@ class UCTSState:
             (1,3,6,1,4,1,96,101,1,4,1,0): _ber_int(self.spll_mode),
             (1,3,6,1,4,1,96,101,1,4,2,0): _ber_uint_app(_T_COUNTER32, self.spll_irq_cnt, 4),
             (1,3,6,1,4,1,96,101,1,4,3,0): _ber_int(self.spll_seq_state),
+            (1,3,6,1,4,1,96,101,1,4,4,0): _ber_int(self.spll_align_state),
+            (1,3,6,1,4,1,96,101,1,4,5,0): _ber_uint_app(_T_COUNTER32, self.spll_hlock, 4),
+            (1,3,6,1,4,1,96,101,1,4,6,0): _ber_uint_app(_T_COUNTER32, self.spll_mlock, 4),
+            (1,3,6,1,4,1,96,101,1,4,7,0): _ber_int(self.spll_hy),
+            (1,3,6,1,4,1,96,101,1,4,8,0): _ber_int(self.spll_my),
+            (1,3,6,1,4,1,96,101,1,4,9,0): _ber_uint_app(_T_COUNTER32, self.spll_del_cnt, 4),
+
+            # ── WR-WRPC-MIB: PTP group (wrpcCore.5.*) ────────────────────────
+            (1,3,6,1,4,1,96,101,1,5,5,0):  _ber_int(self.ptp_servo_state_n),
+            (1,3,6,1,4,1,96,101,1,5,8,0):  _ber_int(self.ptp_clock_offset_ps_hr),
+            (1,3,6,1,4,1,96,101,1,5,9,0):  _ber_int(self.ptp_skew),
+            (1,3,6,1,4,1,96,101,1,5,10,0): _ber_counter64(self.ptp_rtt),
+            (1,3,6,1,4,1,96,101,1,5,12,0): _ber_uint_app(_T_COUNTER32, self.ptp_servo_updates, 4),
+            (1,3,6,1,4,1,96,101,1,5,13,0): _ber_counter64(self.ptp_servo_update_time),
+            (1,3,6,1,4,1,96,101,1,5,14,0): _ber_int(self.ptp_delta_tx_m),
+            (1,3,6,1,4,1,96,101,1,5,15,0): _ber_int(self.ptp_delta_rx_m),
+            (1,3,6,1,4,1,96,101,1,5,16,0): _ber_int(self.ptp_delta_tx_s),
+            (1,3,6,1,4,1,96,101,1,5,17,0): _ber_int(self.ptp_delta_rx_s),
+            (1,3,6,1,4,1,96,101,1,5,18,0): _ber_uint_app(_T_COUNTER32, self.ptp_servo_state_err_cnt, 4),
+            (1,3,6,1,4,1,96,101,1,5,19,0): _ber_uint_app(_T_COUNTER32, self.ptp_clock_offset_err_cnt, 4),
+            (1,3,6,1,4,1,96,101,1,5,20,0): _ber_uint_app(_T_COUNTER32, self.ptp_rtt_err_cnt, 4),
+            (1,3,6,1,4,1,96,101,1,5,22,0): _ber_counter64(self.ptp_asymmetry),
+            (1,3,6,1,4,1,96,101,1,5,23,0): _ber_uint_app(_T_COUNTER32, self.ptp_tx, 4),
+            (1,3,6,1,4,1,96,101,1,5,24,0): _ber_uint_app(_T_COUNTER32, self.ptp_rx, 4),
+            (1,3,6,1,4,1,96,101,1,5,27,0): _ber_counter64(self.ptp_group_27),
+
+            # ── WR-WRPC-MIB: PTP config group (wrpcCore.6.*) ─────────────────
+            (1,3,6,1,4,1,96,101,1,6,1,0): _ber_int(self.ptp_config_restart),
+            (1,3,6,1,4,1,96,101,1,6,2,0): _ber_int(self.ptp_config_apply),
+            (1,3,6,1,4,1,96,101,1,6,3,0): _ber_octetstr(self.ptp_config_sfp_pn.encode()),
+            (1,3,6,1,4,1,96,101,1,6,4,0): _ber_int(self.ptp_config_delta_tx),
+            (1,3,6,1,4,1,96,101,1,6,5,0): _ber_int(self.ptp_config_delta_rx),
+            (1,3,6,1,4,1,96,101,1,6,6,0): _ber_int(self.ptp_config_alpha),
 
             # ── WR-WRPC-MIB: Port group (wrpcCore.7.*) ────────────────────────
             (1,3,6,1,4,1,96,101,1,7,1,0): _ber_int(self.port_link_status),
@@ -442,6 +502,9 @@ class UCTSState:
             (1,3,6,1,4,1,96,101,2,1,1,1,1,8,1):  _ber_uint_app(_T_GAUGE32, self.busy_count, 4),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,9,1):  _ber_octetstr(self.status_bytes),
             (1,3,6,1,4,1,96,101,2,1,1,1,1,10,1): _ber_uint_app(_T_GAUGE32, self.throttle, 4),
+
+            # ── AUX-DIAG MIB: Extra RW register found in hardware walk ───────
+            (1,3,6,1,4,1,96,101,2,1,1,2,1,2,1): _ber_uint_app(_T_GAUGE32, self.aux_diag_rw_reg_nb, 4),
 
             # ── MIB-II System group (RFC 3418 / 1.3.6.1.2.1.1.*) ─────────────
             (1,3,6,1,2,1,1,1,0): _ber_octetstr(self.sys_descr.encode()),
@@ -549,6 +612,28 @@ class UCTSState:
             f"  SpllMode        : {self.spll_mode}  ({spll_modes.get(self.spll_mode,'?')})",
             f"  SpllIrqCnt      : {self.spll_irq_cnt}",
             f"  SpllSeqState    : {self.spll_seq_state}  ({spll_states.get(self.spll_seq_state,'?')})",
+            f"  SpllAlignState  : {self.spll_align_state}",
+            f"  SpllHlock       : {self.spll_hlock}",
+            f"  SpllMlock       : {self.spll_mlock}",
+            f"  SpllHY          : {self.spll_hy}",
+            f"  SpllMY          : {self.spll_my}",
+            f"  SpllDelCnt      : {self.spll_del_cnt}",
+            f"  PtpServoStateN  : {self.ptp_servo_state_n}",
+            f"  PtpClockOffset  : {self.ptp_clock_offset_ps_hr} ps",
+            f"  PtpSkew         : {self.ptp_skew}",
+            f"  PtpRTT          : {self.ptp_rtt}",
+            f"  PtpServoUpdates : {self.ptp_servo_updates}",
+            f"  PtpServoUpdTime : {self.ptp_servo_update_time}",
+            f"  PtpDeltaTxM/RxM : {self.ptp_delta_tx_m} / {self.ptp_delta_rx_m}",
+            f"  PtpDeltaTxS/RxS : {self.ptp_delta_tx_s} / {self.ptp_delta_rx_s}",
+            f"  PtpErrCnts (S/O/R): {self.ptp_servo_state_err_cnt} / {self.ptp_clock_offset_err_cnt} / {self.ptp_rtt_err_cnt}",
+            f"  PtpAsymmetry    : {self.ptp_asymmetry}",
+            f"  PtpTX/RX        : {self.ptp_tx} / {self.ptp_rx}",
+            f"  PtpAlpha        : {self.ptp_alpha}",
+            f"  PtpConfigRest   : {self.ptp_config_restart}",
+            f"  PtpConfigApply  : {self.ptp_config_apply}",
+            f"  PtpConfigSfpPn  : {self.ptp_config_sfp_pn!r}",
+            f"  PtpConfigDelta  : TX={self.ptp_config_delta_tx} RX={self.ptp_config_delta_rx} alpha={self.ptp_config_alpha}",
             f"  SfpPn           : {self.sfp_pn!r}",
             f"  SfpInDB         : {self.sfp_in_db}  ({sfp_db.get(self.sfp_in_db,'?')})",
             f"  PortInternalTx  : {self.port_internal_tx}",
@@ -767,6 +852,18 @@ Commands:
   set WrpcBuildDate <str>  WR build date string
   set SpllMode <n>         SPLL mode (0=na,1=grandmaster,2=master,3=slave)
   set SpllSeqState <n>     SPLL sequencer state (8=ready)
+  set SpllAlignState <n>   SPLL align state (0=extOff, 6=locked)
+  set SpllHlock <n>        SPLL Hlock counter
+  set SpllMlock <n>        SPLL Mlock counter
+  set SpllHY <n>           SPLL H_y integer
+  set SpllMY <n>           SPLL M_y integer
+  set SpllDelCnt <n>       SPLL del counter
+  set PtpServoStateN <n>   PTP servo state numeric
+  set PtpClockOffset <n>   PTP clock offset in ps
+  set PtpRTT <n>           PTP round-trip-time in ps
+  set PtpServoUpdates <n>  PTP servo updates count
+  set PtpAlpha <n>         PTP alpha integer
+  set SfpPn <str>          SFP product number (string)
   set FirmwareVersion <n>  Firmware version integer (bits 23:16 of status)
   set PortLinkStatus <n>   Port link status (0=na, 1=down, 2=up)
   set SysDescr <str>       sysDescr (MIB-II 1.3.6.1.2.1.1.1.0)
@@ -871,6 +968,42 @@ def _apply_set(var: str, val: str) -> None:
         elif var == "SpllSeqState":
             state.spll_seq_state = int(val)
             print(f"  -> SpllSeqState={state.spll_seq_state}")
+        elif var == "SpllAlignState":
+            state.spll_align_state = int(val)
+            print(f"  -> SpllAlignState={state.spll_align_state}")
+        elif var == "SpllHlock":
+            state.spll_hlock = int(val)
+            print(f"  -> SpllHlock={state.spll_hlock}")
+        elif var == "SpllMlock":
+            state.spll_mlock = int(val)
+            print(f"  -> SpllMlock={state.spll_mlock}")
+        elif var == "SpllHY":
+            state.spll_hy = int(val)
+            print(f"  -> SpllHY={state.spll_hy}")
+        elif var == "SpllMY":
+            state.spll_my = int(val)
+            print(f"  -> SpllMY={state.spll_my}")
+        elif var == "SpllDelCnt":
+            state.spll_del_cnt = int(val)
+            print(f"  -> SpllDelCnt={state.spll_del_cnt}")
+        elif var == "PtpServoStateN":
+            state.ptp_servo_state_n = int(val)
+            print(f"  -> PtpServoStateN={state.ptp_servo_state_n}")
+        elif var == "PtpClockOffset":
+            state.ptp_clock_offset_ps_hr = int(val)
+            print(f"  -> PtpClockOffset={state.ptp_clock_offset_ps_hr}")
+        elif var == "PtpRTT":
+            state.ptp_rtt = int(val)
+            print(f"  -> PtpRTT={state.ptp_rtt}")
+        elif var == "PtpServoUpdates":
+            state.ptp_servo_updates = int(val)
+            print(f"  -> PtpServoUpdates={state.ptp_servo_updates}")
+        elif var == "PtpAlpha":
+            state.ptp_alpha = int(val)
+            print(f"  -> PtpAlpha={state.ptp_alpha}")
+        elif var == "SfpPn":
+            state.sfp_pn = val.encode().ljust(16)[:16]
+            print(f"  -> SfpPn={state.sfp_pn!r}")
         elif var == "FirmwareVersion":
             state._fw_version = int(val)
             print(f"  -> FirmwareVersion={state._fw_version}  (status=0x{state.status_word:08X})")
