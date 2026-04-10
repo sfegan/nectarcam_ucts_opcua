@@ -195,9 +195,9 @@ _UCTS_CONFIG: dict = {
             "oid":         "1.3.6.1.4.1.96.101.1.7.1.0",
             "opcua_name":  "PortLinkStatus",
             "opcua_type":  "Enum",
+            "enum":        { "0": "na", "1": "down", "2": "up" },
             "description": "Port link status",
             "poll_every":  10,
-            "enum":        { "0": "na", "1": "down", "2": "up" },
         },
         {
             # WR-WRPC-MIB::wrpcTemperatureValue.1
