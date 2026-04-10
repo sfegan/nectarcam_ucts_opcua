@@ -1,6 +1,6 @@
 {
-  "host": "127.0.0.1",
-  "port": 1161,
+  "host": "10.10.3.99",
+  "port": 161,
   "community": "public",
   "description": "UCTS SNMP Device",
   "opcua_path": "Monitoring",
@@ -12,14 +12,14 @@
     {
       "oid": "AUX-DIAG::wrpcAuxDiagBusyCnt.1",
       "opcua_name": "BusyCount",
-      "opcua_type": "Int32",
-      "description": "Number of busy triggers rejected during the run"
+      "opcua_type": "UInt32",
+      "description": "Number of busy triggers rejected during the run."
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagEventCnt.1",
       "opcua_name": "EventCount",
-      "opcua_type": "Int32",
-      "description": "Number of triggers accepted during the run"
+      "opcua_type": "UInt32",
+      "description": "Number of triggers accepted during the run."
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagStatus.1",
@@ -31,7 +31,7 @@
       "oid": "WR-WRPC-MIB::wrpcPtpClockOffsetPsHR.0",
       "opcua_name": "PtpClockOffset",
       "opcua_type": "Int32",
-      "description": "Current clock offset from master (ps)"
+      "description": "Current clock offset from master (ps). Positive means slave clock is behind master and needs to speed up. Should be stable and close to zero when locked."
     },
     {
       "oid": "WR-WRPC-MIB::wrpcPtpServoStateN.0",
@@ -45,7 +45,7 @@
         "4": "trackPhase",
         "5": "waitOffsetStable"
       },
-      "description": "PTP servo state"
+      "description": "PTP servo state, should be 'trackPhase' when locked."
     },
     {
       "oid": "WR-WRPC-MIB::wrpcPortLinkStatus.0",
@@ -56,7 +56,7 @@
         "1": "down",
         "2": "up"
       },
-      "description": "Port link status",
+      "description": "Port link status. Should be 'up' when the SFP is connected and link is active.",
       "poll_every": 10
     },
     {
@@ -75,42 +75,42 @@
         "9": "clearDacs",
         "10": "waitClearDacs"
       },
-      "description": "SoftPLL sequence state (should be 'ready')",
+      "description": "SoftPLL sequence state (should be 'ready' when operational).",
       "poll_every": 10
     },
     {
       "oid": "WR-WRPC-MIB::wrpcPtpSkew.0",
       "opcua_name": "PtpSkew",
       "opcua_type": "Int32",
-      "description": "Estimated change of master-to-slave delay (ps)",
+      "description": "Estimated change of master-to-slave delay (ps).",
       "poll_every": 10
     },
     {
       "oid": "WR-WRPC-MIB::wrpcPtpRTT.0",
       "opcua_name": "PtpRoundTripTime",
-      "opcua_type": "Int64",
-      "description": "The round-trip-time from master (ps)",
+      "opcua_type": "UInt64",
+      "description": "The round-trip-time from master (ps). Should be stable when locked.",
       "poll_every": 10
     },
     {
       "oid": "WR-WRPC-MIB::wrpcTemperatureValue.1",
       "opcua_name": "Temperature",
       "opcua_type": "Float",
-      "description": "Temperature of the TiCkS PCB (degrees C)",
+      "description": "Temperature of the TiCkS PCB (degrees C).",
       "poll_every": 10
     },
     {
       "oid": "WR-WRPC-MIB::wrpcTimeTAI.0",
       "opcua_name": "TimeTAI",
-      "opcua_type": "Int64",
-      "description": "Current TAI time (seconds since epoch)",
+      "opcua_type": "UInt64",
+      "description": "Current TAI time (seconds since epoch).",
       "poll_every": 10
     },
     {
       "oid": "WR-WRPC-MIB::wrpcTimeSystemUptime.0",
       "opcua_name": "UpTime",
       "opcua_type": "Double",
-      "description": "System uptime (ms)",
+      "description": "System uptime (ms).",
       "poll_every": 10
     },
     {
@@ -121,7 +121,7 @@
       ],
       "opcua_name": "PtpErrorCounts",
       "opcua_type": "UInt32",
-      "description": "Number of errors: [ servo state errors, clock offset errors, RTT errors ]",
+      "description": "Vector with count of different error types: [ servo state errors, clock offset errors, RTT errors ].",
       "poll_every": 60
     },
     {
@@ -131,7 +131,7 @@
       ],
       "opcua_name": "PtpTxAndRx",
       "opcua_type": "UInt64",
-      "description": "Number of transmitted and received PTP frames: [ Tx, Rx ]",
+      "description": "Number of transmitted and received PTP frames: [ Tx, Rx ].",
       "poll_every": 60
     },
     {
@@ -141,56 +141,56 @@
       ],
       "opcua_name": "PortTxAndRx",
       "opcua_type": "UInt64",
-      "description": "Total transmitted and received frames on WR port (all traffic): [ Tx, Rx ]",
+      "description": "Total transmitted and received frames on WR port (all traffic): [ Tx, Rx ].",
       "poll_every": 60
     },
     {
       "oid": "WR-WRPC-MIB::wrpcPtpAsymmetry.0",
       "opcua_name": "PtpAsymmetry",
-      "opcua_type": "Int64",
-      "description": "Measured link asymmetry (ps)",
+      "opcua_type": "UInt64",
+      "description": "Measured link asymmetry (ps). Should be stable when locked and is expected to be small.",
       "poll_every": 60
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagDstIpAddr.1",
       "opcua_name": "DstIpAddr",
       "opcua_type": "String",
-      "description": "Destination IP address of UCTS timestamps",
+      "description": "Destination IP address of UCTS timestamps.",
       "poll_every": 300
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagDstMacAddrH.1",
       "opcua_name": "_DstMacAddr_32MSB",
       "opcua_type": "ByteString",
-      "description": "(internal) 32 MSB of destination MAC address",
+      "description": "(internal) 32 MSB of destination MAC address.",
       "poll_every": 300
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagDstMacAddrL.1",
       "opcua_name": "_DstMacAddr_16LSB",
       "opcua_type": "ByteString",
-      "description": "(internal) 16 LSB of destination MAC address",
+      "description": "(internal) 16 LSB of destination MAC address.",
       "poll_every": 300
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagDstPort.1",
       "opcua_name": "DstPort",
       "opcua_type": "UInt16",
-      "description": "Destination port of UCTS timestamps",
+      "description": "Destination port of UCTS timestamps.",
       "poll_every": 300
     },
     {
       "oid": "AUX-DIAG::wrpcAuxDiagThrottle.1",
       "opcua_name": "Throttle",
-      "opcua_type": "Int64",
-      "description": "Throttle parameter of UCTS TiCkS",
+      "opcua_type": "UInt32",
+      "description": "Throttle parameter of UCTS TiCkS.",
       "poll_every": 300
     },
     {
       "oid": "WR-WRPC-MIB::wrpcVersionSwVersion.0",
       "opcua_name": "WrpcSwVersion",
       "opcua_type": "String",
-      "description": "Version of the wrpc software",
+      "description": "Version of the WRPC software.",
       "poll_every": 300
     }
   ],
@@ -198,8 +198,8 @@
     {
       "opcua_name": "SoftwareVersion",
       "opcua_type": "String",
-      "description": "Version of the UCTS controller",
-      "value": "2.0.1"
+      "description": "Version of the UCTS controller.",
+      "value": "2.0.2"
     },
     {
       "opcua_name": "tai_offset",
@@ -216,25 +216,25 @@
     {
       "opcua_name": "Status",
       "opcua_type": "Int64",
-      "description": "Status of TiCkS board (raw uint32 status word)",
+      "description": "Status of TiCkS board (raw uint32 status word).",
       "value": null
     },
     {
       "opcua_name": "DstMacAddr",
       "opcua_type": "String",
-      "description": "Destination MAC address (aa:bb:cc:dd:ee:ff)",
+      "description": "Destination MAC address (aa:bb:cc:dd:ee:ff).",
       "value": null
     },
     {
       "opcua_name": "State",
       "opcua_type": "Int32",
-      "description": "TiCkS state: 1=Running, 0=Online/Standby (from Status bit 7)",
+      "description": "TiCkS state: 1=Running, 0=Online/Standby (from Status bit 7).",
       "value": null
     },
     {
       "opcua_name": "FirmwareVersion",
       "opcua_type": "String",
-      "description": "TiCkS firmware version (from Status bits 23:16)",
+      "description": "TiCkS firmware version (from Status bits 23:16).",
       "value": null
     }
   ],
