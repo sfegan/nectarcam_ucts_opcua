@@ -71,10 +71,12 @@ log = logging.getLogger("ucts_client")
 
 _MONITORING_VARS = [
     # SNMP-polled and derived variables
-    "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort", "EventCount",
-    "FirmwareVersion", "PortLinkStatus", "State", "Status", "Temperature",
-    "Throttle", "TimeTAI", "TimeTAIString", "UpTime",
-    "WrpcSwVersion", "SoftwareVersion", "tai_offset",
+    "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort",
+    "EventCount", "FirmwareVersion", "PortLinkStatus", "PortTxAndRx",
+    "PtpAsymmetry", "PtpClockOffset", "PtpErrorCounts", "PtpRoundTripTime", "PtpServoState",
+    "PtpSkew", "PtpTxAndRx", "SpllSeqState", "State", "Status", "Temperature",
+    "Throttle", "TimeTAI", "UpTime", "WrpcSwVersion",
+    "SoftwareVersion", "tai_offset",
     # Built-in server variables
     "device_host", "device_port", "device_command_port", "device_polling_interval",
     "device_connected", "device_connection_uptime", "device_connection_downtime", 

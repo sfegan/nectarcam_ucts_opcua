@@ -180,13 +180,34 @@ _UCTS_CONFIG: dict = {
         },
         {
             # AUX-DIAG::wrpcAuxDiagStatus.1
-            # wrpcAuxDiagStatus — ASN_OCTET_STR encoding a uint32 bitmask.
-            # Declared ByteString so _cast_to_ua leaves raw bytes intact.
             "oid":         "1.3.6.1.4.1.96.101.2.1.1.1.1.9.1",
             "opcua_name":  "_RawStatus",
             "opcua_type":  "ByteString",
             "description": "(internal) raw uint32 status word as bytes",
         },
+        {
+            # wrpcPtpClockOffsetPsHR.0
+            "oid":         "1.3.6.1.4.1.96.101.1.5.8.0",
+            "opcua_name":  "PtpClockOffset",
+            "opcua_type":  "Int32",
+            "description": "Current clock offset from master (ps)",
+        },
+        {
+            # wrpcPtpServoStateN.0
+            "oid":         "1.3.6.1.4.1.96.101.1.5.5.0",
+            "opcua_name":  "PtpServoState",
+            "opcua_type":  "Enum",
+            "enum": {
+                "0": "uninitialized",
+                "1": "syncNsec",
+                "2": "syncSec",
+                "3": "syncPhase",
+                "4": "trackPhase",
+                "5": "waitOffsetStable"
+            },
+            "description": "PTP servo state",
+        },
+
         # #####################################################################
         # Secondary monitoring data set - poll every 10 cycles (10 seconds)
         # #####################################################################
@@ -200,11 +221,43 @@ _UCTS_CONFIG: dict = {
             "poll_every":  10,
         },
         {
+            # WR-WRPC-MIB::wrpcSpllSeqState.0
+            "oid":         "1.3.6.1.4.1.96.101.1.4.3.0",
+            "opcua_name":  "SpllSeqState",
+            "opcua_type":  "Enum",
+            "enum": {
+                "1": "startExt",
+                "2": "waitExt",
+                "3": "startHelper",
+                "4": "waitHelper",
+                "5": "startMain",
+                "6": "waitMain",
+                "7": "disabled",
+                "8": "ready",
+                "9": "clearDacs",
+                "10": "waitClearDacs"
+            },
+            "description": "SoftPLL sequence state (should be 'ready')",
+            "poll_every":  10,
+        },
+        {
+            # WR-WRPC-MIB::wrpcPtpSkew.0
+            "oid":         "1.3.6.1.4.1.96.101.1.5.9.0",
+            "opcua_name":  "PtpSkew",
+            "opcua_type":  "Int32",
+            "description": "Estimated change of master-to-slave delay (ps)",
+            "poll_every":  10,
+        },
+        {
+            # WR-WRPC-MIB::wrpcPtpRTT.0
+            "oid":         "1.3.6.1.4.1.96.101.1.5.10.0",
+            "opcua_name":  "PtpRoundTripTime",
+            "opcua_type":  "Int64",
+            "description": "The round-trip-time from master (ps)",
+            "poll_every":  10,
+        },
+        {
             # WR-WRPC-MIB::wrpcTemperatureValue.1
-            # wrpcTemperatureValue — MIB SYNTAX is DisplayString, device sends
-            # a decimal float string e.g. "41.9375" (degrees C directly).
-            # The bridge's _cast_to_ua() decodes the bytes to str before
-            # calling float(), so no derived variable or scaling is needed.
             "oid":         "1.3.6.1.4.1.96.101.1.3.1.3.1",
             "opcua_name":  "Temperature",
             "opcua_type":  "Float",
@@ -216,28 +269,73 @@ _UCTS_CONFIG: dict = {
             "oid":         "1.3.6.1.4.1.96.101.1.2.1.0",
             "opcua_name":  "TimeTAI",
             "opcua_type":  "Int64",
-            "description": "The current time, in TAI seconds since the epoch (1970-01-01T00:00:00Z)",
+            "description": "Current TAI time (seconds since epoch)",
             "poll_every":  10,
         },
-        # {
-        #     # WR-WRPC-MIB::wrpcTimeTAIString.0
-        #     # Removed as unnecessary after discussion with Michael Punch via email (2026-04-01)
-        #     "oid":         "1.3.6.1.4.1.96.101.1.2.2.0",
-        #     "opcua_name":  "TimeTAIString",
-        #     "opcua_type":  "String",
-        #     "description": "TAI time string (ISO 8601)",
-        #     "poll_every":  10,
-        # },
         {
-            # WRPC-MIB::wrpcTimeSystemUptime.0
+            # WR-WRPC-MIB::wrpcTimeSystemUptime.0
             "oid":         "1.3.6.1.4.1.96.101.1.2.3.0",
             "opcua_name":  "UpTime",
             "opcua_type":  "Double",
-            "description": "Uptime of the UCTS in milliseconds",
+            "description": "System uptime (ms)",
             "poll_every":  10,
         },
+
         # #####################################################################
-        # Tertiary monitoring data set - poll every 180 cycles (3 minutes)
+        # Tertiary monitoring data set - poll every 60 cycles (1 minute)
+        # #####################################################################
+        {            
+            "oid":         [
+                "1.3.6.1.4.1.96.101.1.5.18.0", # WR-WRPC-MIB::wrpcPtpServoStateErrCnt.0
+                "1.3.6.1.4.1.96.101.1.5.19.0", # WR-WRPC-MIB::wrpcPtpClockOffsetErrCnt.0
+                "1.3.6.1.4.1.96.101.1.5.20.0", # WR-WRPC-MIB::wrpcPtpRTTErrCnt.0
+            ],
+            "opcua_name":  "PtpErrorCounts",
+            "opcua_type":  "UInt32",
+            "description": "Number of errors: [ servo state errors, clock offset errors, RTT errors ]",
+            "poll_every":  60,
+        },
+        {            
+            "oid":         [
+                "1.3.6.1.4.1.96.101.1.5.23.0", # WR-WRPC-MIB::wrpcPtpTx.0
+                "1.3.6.1.4.1.96.101.1.5.24.0", # WR-WRPC-MIB::wrpcPtpRx.0
+            ],
+            "opcua_name":  "PtpTxAndRx",
+            "opcua_type":  "UInt64",
+            "description": "Number of transmitted and received PTP frames: [ Tx, Rx ]",
+            "poll_every":  60,
+        },
+        {
+            "oid":         [
+                "1.3.6.1.4.1.96.101.1.7.4.0", # WR-WRPC-MIB::wrpcPortInternalTx.0
+                "1.3.6.1.4.1.96.101.1.7.5.0", # WR-WRPC-MIB::wrpcPortInternalRx.0
+            ],
+            "opcua_name":  "PortTxAndRx",
+            "opcua_type":  "UInt64",
+            "description": "Total transmitted and received frames on WR port (all traffic): [ Tx, Rx ]",
+            "poll_every":  60,
+        },
+        {
+            # WR-WRPC-MIB::wrpcPtpAsymmetry.0
+            "oid":         "1.3.6.1.4.1.96.101.1.5.22.0",
+            "opcua_name":  "PtpAsymmetry",
+            "opcua_type":  "Int64",
+            "description": "Measured link asymmetry (ps)",
+            "poll_every":  60,
+        },
+        
+        # {
+        #     # WR-WRPC-MIB::wrpcPortSfpInDB.0
+        #     "oid":         "1.3.6.1.4.1.96.101.1.7.3.0",
+        #     "opcua_name":  "SfpInDB",
+        #     "opcua_type":  "Enum",
+        #     "enum": { "0": "na", "1": "notInDataBase", "2": "inDataBase" },
+        #     "description": "Whether SFP is calibrated in DB",
+        #     "poll_every":  180,
+        # },
+
+        # #####################################################################
+        # Configuration monitoring data set - poll every 300 cycles (5 minutes)
         # #####################################################################
         {
             # AUX-DIAG::wrpcAuxDiagDstIpAddr.1
@@ -245,7 +343,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "DstIpAddr",
             "opcua_type":  "String",
             "description": "Destination IP address of UCTS timestamps",
-            "poll_every":  180,
+            "poll_every":  300,
         },
         {
             # AUX-DIAG::wrpcAuxDiagDstMacAddrH.1
@@ -253,7 +351,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "_DstMacAddr_32MSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 32 MSB of destination MAC address",
-            "poll_every":  180,
+            "poll_every":  300,
         },
         {
             # AUX-DIAG::wrpcAuxDiagDstMacAddrL.1
@@ -261,7 +359,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "_DstMacAddr_16LSB",
             "opcua_type":  "ByteString",
             "description": "(internal) 16 LSB of destination MAC address",
-            "poll_every":  180,
+            "poll_every":  300,
         },
         {
             # AUX-DIAG::wrpcAuxDiagDstPort.1
@@ -269,7 +367,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "DstPort",
             "opcua_type":  "UInt16",
             "description": "Destination port of UCTS timestamps",
-            "poll_every":  180,
+            "poll_every":  300,
         },
         {
             # AUX-DIAG::wrpcAuxDiagThrottle.1
@@ -277,15 +375,15 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "Throttle",
             "opcua_type":  "Int64",
             "description": "Throttle parameter of UCTS TiCkS",
-            "poll_every":  180,
+            "poll_every":  300,
         },
         {
-            # WR-WRPC-MIB::wrpcVersionSwVersion.0
+            # WR-WRPC-MIB::wrpcWrpcSwVersion.0
             "oid":         "1.3.6.1.4.1.96.101.1.1.2.0",
             "opcua_name":  "WrpcSwVersion",
             "opcua_type":  "String",
             "description": "Version of the wrpc software",
-            "poll_every":  180,
+            "poll_every":  300,
         },
     ],
     "constants": [
