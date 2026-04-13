@@ -15,7 +15,7 @@ Usage
 -----
   python ucts_client.py [options]
 
-  --endpoint URL    OPC UA server endpoint  (default: opc.tcp://localhost:4840/nectarcam/)
+  --endpoint URL    OPC UA server endpoint  (default: opc.tcp://localhost:4840/ucts/)
   --namespace URI   OPC UA namespace URI    (default: http://cta-observatory.org/nectarcam/ucts/)
   --user USER       OPC UA username         (optional)
   --password PASS   OPC UA password         (optional)
@@ -73,8 +73,8 @@ _MONITORING_VARS = [
     # SNMP-polled and derived variables
     "BusyCount", "DstIpAddr", "DstMacAddr", "DstPort",
     "EventCount", "FirmwareVersion", "PortLinkStatus", "PortTxAndRx",
-    "PtpAsymmetry", "PtpClockOffset", "PtpErrorCounts", "PtpRoundTripTime", "PtpServoState",
-    "PtpSkew", "PtpTxAndRx", "SpllSeqState", "State", "Status", "Temperature",
+    "PtpClockOffset", "PtpErrorCounts", "PtpRoundTripTime", "PtpServoState",
+    "PtpTxAndRx", "SpllSeqState", "State", "Status", "Temperature",
     "Throttle", "TimeTAI", "UpTime", "WrpcSwVersion",
     "SoftwareVersion", "tai_offset",
     # Built-in server variables
