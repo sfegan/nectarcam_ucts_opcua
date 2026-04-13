@@ -242,14 +242,14 @@ _UCTS_CONFIG: dict = {
             "description": "SoftPLL sequence state (should be 'ready' when operational).",
             "poll_every":  10,
         },
-        {
-            # WR-WRPC-MIB::wrpcPtpSkew.0
-            "oid":         "1.3.6.1.4.1.96.101.1.5.9.0",
-            "opcua_name":  "PtpSkew",
-            "opcua_type":  "Int32",
-            "description": "Estimated change of master-to-slave delay (ps).",
-            "poll_every":  10,
-        },
+        # {
+        #     # WR-WRPC-MIB::wrpcPtpSkew.0
+        #     "oid":         "1.3.6.1.4.1.96.101.1.5.9.0",
+        #     "opcua_name":  "PtpSkew",
+        #     "opcua_type":  "Int32",
+        #     "description": "Estimated change of master-to-slave delay (ps).",
+        #     "poll_every":  10,
+        # },
         {
             # WR-WRPC-MIB::wrpcPtpRTT.0
             "oid":         "1.3.6.1.4.1.96.101.1.5.10.0",
@@ -319,16 +319,15 @@ _UCTS_CONFIG: dict = {
             "description": "Total transmitted and received frames on WR port (all traffic): [ Tx, Rx ].",
             "poll_every":  60,
         },
-        {
-            # WR-WRPC-MIB::wrpcPtpAsymmetry.0
-            "oid":         "1.3.6.1.4.1.96.101.1.5.22.0",
-            "opcua_name":  "PtpAsymmetry",
-            "opcua_type":  "UInt64",
-            "description": "Measured link asymmetry (ps). "
-                            "Should be stable when locked and is expected to be small.",
-            "poll_every":  60,
-        },
-        
+        # {
+        #     # WR-WRPC-MIB::wrpcPtpAsymmetry.0
+        #     "oid":         "1.3.6.1.4.1.96.101.1.5.22.0",
+        #     "opcua_name":  "PtpAsymmetry",
+        #     "opcua_type":  "UInt64",
+        #     "description": "Measured link asymmetry (ps). "
+        #                     "Should be stable when locked and is expected to be small.",
+        #     "poll_every":  60,
+        # },
         # {
         #     # WR-WRPC-MIB::wrpcPortSfpInDB.0
         #     "oid":         "1.3.6.1.4.1.96.101.1.7.3.0",
