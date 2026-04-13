@@ -335,7 +335,7 @@ _UCTS_CONFIG: dict = {
         #     "opcua_type":  "Enum",
         #     "enum": { "0": "na", "1": "notInDataBase", "2": "inDataBase" },
         #     "description": "Whether SFP is calibrated in DB",
-        #     "poll_every":  180,
+        #     "poll_every":  60,
         # },
 
         # #####################################################################
