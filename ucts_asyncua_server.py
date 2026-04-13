@@ -418,7 +418,7 @@ _UCTS_CONFIG: dict = {
         # when their source OIDs are unavailable (0 = never expire).
         {
             "opcua_name":  "Status",
-            "opcua_type":  "Int64",
+            "opcua_type":  "UInt32",
             "description": "Status of TiCkS board (raw uint32 status word).",
             "value":       None,
         },
@@ -430,13 +430,13 @@ _UCTS_CONFIG: dict = {
         },
         {
             "opcua_name":  "State",
-            "opcua_type":  "Int32",
+            "opcua_type":  "UInt32",
             "description": "TiCkS state: 1=Running, 0=Online/Standby (from Status bit 7).",
             "value":       None,
         },
         {
             "opcua_name":  "FirmwareVersion",
-            "opcua_type":  "String",
+            "opcua_type":  "UInt32",
             "description": "TiCkS firmware version (from Status bits 23:16).",
             "value":       None,
         },
@@ -492,9 +492,9 @@ def _state_from_status(status: int) -> int:
     return int((status >> 7) & 0x1)
 
 
-def _fw_version_from_status(status: int) -> str:
+def _fw_version_from_status(status: int) -> int:
     """Firmware version integer from bits 23:16 of the status word."""
-    return "" if status == 0 else str((status >> 16) & 0xFF)
+    return 0 if status == 0 else ((status >> 16) & 0xFF)
 
 
 def _good_dv(
@@ -549,9 +549,9 @@ class UCTSPoller(SNMPPoller):
     }
     _DERIVED_OUTPUTS: ClassVar[dict[str, str]] = {
         "DstMacAddr":      "String",
-        "Status":          "Int64",
-        "State":           "Int32",
-        "FirmwareVersion": "String",
+        "Status":          "UInt32",
+        "State":           "UInt32",
+        "FirmwareVersion": "UInt32",
     }
 
     async def on_address_space_ready(self) -> None:
