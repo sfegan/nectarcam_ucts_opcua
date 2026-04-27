@@ -395,7 +395,7 @@ _UCTS_CONFIG: dict = {
             "opcua_name":  "SoftwareVersion",
             "opcua_type":  "String",
             "description": "Version of the UCTS controller.",
-            "value":       "2.0.2",
+            "value":       "2.0.3",
         },
         {
             "opcua_name":  "tai_offset",
