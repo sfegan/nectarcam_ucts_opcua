@@ -127,7 +127,7 @@ class _ChangeHandler(SubHandler):
     def datachange_notification(self, node, val, data) -> None:
         name = self._map.get(str(node.nodeid), str(node.nodeid))
         dv = data.monitored_item.Value
-        status = dv.StatusCode_ if dv.StatusCode_ else "Good"
+        status = dv.StatusCode if dv.StatusCode else "Good"
         ts = dv.SourceTimestamp or dv.ServerTimestamp or ""
         print(f"\r  [sub] {name:30s} = {val!r:30s}  status={status}  {ts}")
         print("ucts> ", end="", flush=True)
@@ -199,7 +199,7 @@ class UCTSClient:
             try:
                 dv = await self.read_var(name)
                 val = dv.Value.Value if dv.Value else None
-                sc = dv.StatusCode_
+                sc = dv.StatusCode
                 print(f"  {name:30s} = {val!r:30s}  [{sc}]")
             except Exception as exc:
                 print(f"  {name:30s}  ERROR: {exc}")
@@ -302,7 +302,7 @@ class UCTSClient:
                 try:
                     dv = await child.read_data_value()
                     val = f" = {dv.Value.Value!r}" if dv.Value else " [no value]"
-                    sc  = f" [{dv.StatusCode_}]" if dv.StatusCode_ else ""
+                    sc  = f" [{dv.StatusCode}]" if dv.StatusCode else ""
                 except Exception:
                     val = sc = ""
                 print(f"{indent}{bn.Name}  ({nc_name}){val}{sc}")
