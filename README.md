@@ -77,22 +77,21 @@ These identifiers survive server restarts and are stable across re-deployments. 
 
 | Variable | Type | Description |
 |----------|------|-------------|
-| `BusyCount` | Int32 | Cumulative count of busy/rejected triggers since last reset |
+| `BusyCount` | UInt32 | Cumulative count of busy/rejected triggers since last reset |
 | `DstIpAddr` | String | Destination IP address for UDP timestamp delivery (default derived from TiCkS IP: last 10 bits replaced with `3.250`) |
 | `DstMacAddr` | String | Destination MAC address for UDP timestamp delivery (merged from two SNMP OIDs, colon-separated: `01:23:45:67:89:AB`) |
-| `DstPort` | Int32 | Destination UDP port for timestamp delivery (default: `55000`) |
-| `EventCount` | Int32 | Cumulative count of read-out trigger events since last reset |
-| `FirmwareVersion` | String | Firmware version number, extracted from `Status` bits 23:16 |
+| `DstPort` | UInt16 | Destination UDP port for timestamp delivery (default: `55000`) |
+| `EventCount` | UInt32 | Cumulative count of read-out trigger events since last reset |
+| `FirmwareVersion` | UInt32 | Firmware version number, extracted from `Status` bits 23:16 |
 | `PortLinkStatus` | String | White Rabbit ethernet link status: `na`, `down`, or `up` |
-| `State` | Int32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Online/Standby (TDC and counters stopped), `1` = Running (TDC and counters active) |
-| `Status` | Int64 | Raw uint32 SNMP status word. Bit layout (LSB first): bit 0 = throttle enabled, bit 1 = WR time valid, bit 2 = SPI enabled, bit 7 = counters/TDC enabled (`rst_cnt_ack`), bits 16–23 = firmware version, bits 24–31 = data format version |
+| `State` | UInt32 | TiCkS operating state derived from `Status` bit 7 (`rst_cnt_ack`): `0` = Online/Standby (TDC and counters stopped), `1` = Running (TDC and counters active) |
+| `Status` | UInt32 | Raw uint32 SNMP status word. Bit layout (LSB first): bit 0 = throttle enabled, bit 1 = WR time valid, bit 2 = SPI enabled, bit 7 = counters/TDC enabled (`rst_cnt_ack`), bits 16–23 = firmware version, bits 24–31 = data format version |
 | `Temperature` | Float | PCB temperature (°C) from the WR node temperature sensor |
-| `Throttle` | Int64 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
-| `TimeTAI` | Int64 | Current board time in TAI seconds (from White Rabbit) |
-| `TimeTAIString` | String | Current TAI time as ISO 8601 string |
-| `UpTime` | String | Board uptime as formatted string (e.g. `5:23:49.160000`) |
+| `Throttle` | UInt32 | Trigger throttle register value. The throttle suppresses events when the time between first and last event in a bunch is less than the configured minimum (default `0x30D3` = 12488 counts ≈ 200 µs at 62.5 MHz). `0` means throttling is disabled |
+| `TimeTAI` | UInt64 | Current board time in TAI seconds (from White Rabbit) |
+| `UpTime` | Double | Board uptime in milliseconds since the WR node last booted |
 | `WrpcSwVersion` | String | White Rabbit PTP core software version |
-| `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.0`) |
+| `SoftwareVersion` | String | Version of this server implementation (constant: `2.0.3`) |
 | `tai_offset` | Int32 | TAI minus UTC offset in seconds as configured in this server (set via `--tai-offset` or `SetTaiOffset`). Reflects the server's working assumption and is not an authoritative statement of the current IERS value |
 | `device_host` | String | IP address of the SNMP device |
 | `device_port` | UInt16 | SNMP UDP port |
@@ -102,6 +101,29 @@ These identifiers survive server restarts and are stable across re-deployments. 
 | `device_connection_uptime` | Double | Milliseconds elapsed since the device last came online; `0.0` while offline |
 | `device_connected` | Boolean | `True` when the SNMP agent is reachable |
 | `device_state` | Int32 | Application-level device state: `0` = offline, `1` = online, `2` = running |
+
+### Monitoring Variables — additional White Rabbit / PTP telemetry
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `PtpClockOffset` | Int32 | Current clock offset from master (ps). Positive means the slave clock is behind master and needs to speed up; should be stable and close to zero when locked. |
+| `PtpServoState` | String | PTP servo state enum: `uninitialized`, `syncNsec`, `syncSec`, `syncPhase`, `trackPhase`, `waitOffsetStable`. Should be `trackPhase` when locked. |
+| `SpllSeqState` | String | SoftPLL sequence state enum: `startExt`, `waitExt`, `startHelper`, `waitHelper`, `startMain`, `waitMain`, `disabled`, `ready`, `clearDacs`, `waitClearDacs`. Should be `ready` when operational. |
+| `PtpRoundTripTime` | UInt64 | Round-trip time from master (ps). Should be stable when locked. |
+| `PtpErrorCounts` | UInt32[3] | Error counters `[servo state errors, clock offset errors, RTT errors]`. |
+| `PtpTxAndRx` | UInt64[2] | Transmitted/received PTP frame counts: `[Tx, Rx]`. |
+| `PortTxAndRx` | UInt64[2] | Transmitted/received frame counts for all traffic on the WR port: `[Tx, Rx]`. |
+
+### Polling tiers
+
+Not all monitoring variables are refreshed every poll cycle. Each SNMP OID is assigned a tier that is a multiple of `--poll-interval`:
+
+| Tier | Default refresh | Variables |
+|------|------------------|-----------|
+| 1 (every cycle) | `--poll-interval` (1 s) | `BusyCount`, `EventCount`, `_RawStatus` (→ `Status`/`State`/`FirmwareVersion`), `PtpClockOffset`, `PtpServoState` |
+| 2 (×10) | 10 s | `PortLinkStatus`, `SpllSeqState`, `PtpRoundTripTime`, `Temperature`, `TimeTAI`, `UpTime` |
+| 3 (×60) | 60 s | `PtpErrorCounts`, `PtpTxAndRx`, `PortTxAndRx` |
+| Config (×300) | 5 min | `DstIpAddr`, `DstMacAddr`, `DstPort`, `Throttle`, `WrpcSwVersion` |
 
 Variables become `UncertainLastUsableValue` if the SNMP agent is unreachable, and transition to `BadNoCommunication` after `--variable-lifetime` seconds.
 
