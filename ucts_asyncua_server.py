@@ -814,27 +814,35 @@ class UCTSCommander:
 
             loop = asyncio.get_running_loop()
             try:
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            except OSError as exc:
+                log.error("TiCkS UDP socket() failed: %s", exc)
+                return False
+
+            try:
+                with sock:
                     sock.setblocking(False)
-                    await loop.sock_sendto(sock, cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
                     log.debug("TiCkS UDP -> %s:%d  cmd=%s",
                               self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
-                    data, _ = await asyncio.wait_for(
-                        loop.sock_recvfrom(sock, 8),
-                        timeout=_UDP_TIMEOUT,
-                    )
-            except asyncio.TimeoutError:
-                log.warning("TiCkS ACK timeout  cmd=%s", cmd_hex.upper())
-                return False
-            except OSError as exc:
-                log.error("TiCkS UDP error: %s", exc)
-                return False
+                    try:
+                        await loop.sock_sendto(sock, cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
+                    except OSError as exc:
+                        log.error("TiCkS UDP sendto() failed: %s", exc)
+                        return False
+                    try:
+                        data, _ = await asyncio.wait_for(loop.sock_recvfrom(sock, 8), timeout=_UDP_TIMEOUT)
+                    except asyncio.TimeoutError:
+                        log.warning("TiCkS ACK timeout  cmd=%s", cmd_hex.upper())
+                        return False
+                    except OSError as exc:
+                        log.error("TiCkS UDP recvfrom() failed: %s", exc)
+                        return False
             finally:
-                # Record completion time whether ACK succeeded or not, so the
-                # next command still waits the full inter-command gap.
                 self._last_send_at = asyncio.get_event_loop().time()
 
         ack = data.hex().upper()
+        log.debug("TiCkS UDP <- %s:%d  recv=%s",
+            self.ucts_ip, self.ucts_cmd_port, ack)
         if ack == cmd_hex.upper():
             log.info("TiCkS ACK OK  cmd=%s", cmd_hex.upper())
             return True
