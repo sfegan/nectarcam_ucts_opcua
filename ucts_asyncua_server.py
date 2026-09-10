@@ -146,7 +146,9 @@ log = logging.getLogger("ucts_asyncua_server")
 # computed and their store entries updated in write_variables().
 # ─────────────────────────────────────────────────────────────────────────────
 
-_UDP_TIMEOUT   = 2.0   # seconds to wait for TiCkS echo-back acknowledge
+_UDP_TIMEOUT      = 0.4   # seconds to wait for a single TiCkS echo-back attempt
+_UDP_MAX_ATTEMPTS = 5     # resends on ACK timeout (5 * 0.4s = 2.0s total budget)
+
 _TAI_UTC_DELTA = 37    # TAI − UTC in seconds; last updated 2016-12-31 (IERS bulletin C 53)
                        # Check https://www.ietf.org/timezones/data/leap-seconds.list if updating
 
@@ -797,6 +799,12 @@ class UCTSCommander:
 
         Fully async: uses a non-blocking socket with loop.sock_sendto /
         loop.sock_recvfrom so the event loop is never blocked.
+
+        If no ACK is received within _UDP_TIMEOUT, the command is resent up
+        to _UDP_MAX_ATTEMPTS times (same socket, same lock held throughout).
+        A local OS-level send/receive failure (e.g. EPERM) is NOT retried —
+        it's returned immediately, since resending within the same window is
+        unlikely to route around a local policy denial.
         """
         try:
             cmd_bytes = bytes.fromhex(cmd_hex)
@@ -822,21 +830,27 @@ class UCTSCommander:
             try:
                 with sock:
                     sock.setblocking(False)
-                    log.debug("TiCkS UDP -> %s:%d  cmd=%s",
-                              self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper())
-                    try:
-                        await loop.sock_sendto(sock, cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
-                    except OSError as exc:
-                        log.error("TiCkS UDP sendto() failed: %s", exc)
-                        return False
-                    try:
-                        data, _ = await asyncio.wait_for(loop.sock_recvfrom(sock, 8), timeout=_UDP_TIMEOUT)
-                    except asyncio.TimeoutError:
-                        log.warning("TiCkS ACK timeout  cmd=%s", cmd_hex.upper())
-                        return False
-                    except OSError as exc:
-                        log.error("TiCkS UDP recvfrom() failed: %s", exc)
-                        return False
+                    for attempt in range(1, _UDP_MAX_ATTEMPTS + 1):
+                        log.debug("TiCkS UDP -> %s:%d  cmd=%s  (attempt %d/%d)",
+                                  self.ucts_ip, self.ucts_cmd_port, cmd_hex.upper(),
+                                  attempt, _UDP_MAX_ATTEMPTS)
+                        try:
+                            await loop.sock_sendto(sock, cmd_bytes, (self.ucts_ip, self.ucts_cmd_port))
+                        except OSError as exc:
+                            log.error("TiCkS UDP sendto() failed: %s", exc)
+                            return False
+                        try:
+                            data, _ = await asyncio.wait_for(loop.sock_recvfrom(sock, 8), timeout=_UDP_TIMEOUT)
+                            break
+                        except asyncio.TimeoutError:
+                            log.warning("TiCkS ACK timeout  cmd=%s  (attempt %d/%d)",
+                                        cmd_hex.upper(), attempt, _UDP_MAX_ATTEMPTS)
+                            if attempt == _UDP_MAX_ATTEMPTS:
+                                return False
+                            continue
+                        except OSError as exc:
+                            log.error("TiCkS UDP recvfrom() failed: %s", exc)
+                            return False
             finally:
                 self._last_send_at = asyncio.get_event_loop().time()
 
