@@ -46,6 +46,7 @@ Interactive commands (at the ucts> prompt)
   status <hex_or_dec>        Set raw status word directly
   reset                      Apply Reset command (state=Online, counters=0)
   getready                   Apply GetReady command (state=Running)
+  no_ack [n]                 Suppress next n command ACKs (default 1)
   help                       Show this help
   quit / exit                Shut down
 
@@ -306,6 +307,7 @@ class UCTSState:
         self._ticks_state: int = 0       # 0=Online, 1=Running, 2=Unknown
         self._fw_version:  int = 0x10
         self._spi_enabled: bool = False
+        self.suppress_ack_count: int = 0
         self.dst_ip:       str   = "10.10.3.250"
         self.dst_mac_h:    bytes = b"\x44\xa8\x42\x44"   # 4 MSB
         self.dst_mac_l:    bytes = b"\x32\xc9"           # 2 LSB
@@ -594,6 +596,7 @@ class UCTSState:
             f"  Status word     : 0x{self.status_word:08X}  ({self.status_word})",
             f"  FirmwareVersion : {self._fw_version}",
             f"  SPI enabled     : {self._spi_enabled}",
+            f"  Suppress ACKs   : {self.suppress_ack_count}",
             f"  DstIpAddr       : {self.dst_ip}",
             f"  DstMacAddr      : {mac}",
             f"  DstPort         : {self.dst_port}",
@@ -771,6 +774,11 @@ class TiCkSCommandProtocol(asyncio.DatagramProtocol):
             else:
                 log.warning("CMD: unknown function 0x%X", func)
 
+        if state.suppress_ack_count > 0:
+            state.suppress_ack_count -= 1
+            log.warning("CMD: ACK suppressed (%d remaining)", state.suppress_ack_count)
+            return
+
         state.cmd_out_pkts += 1
         state.cmd_out_bytes += len(data)
         self._transport.sendto(data, addr)   # echo-back acknowledge
@@ -874,6 +882,7 @@ Commands:
   status <hex_or_dec>      Set raw status word (overrides state/fw/spi)
   reset                    Apply Reset (state=Online, counters=0)
   getready                 Apply GetReady (state=Running)
+  no_ack [n]               Suppress next n UDP command ACKs (default 1)
   help                     Show this help
   quit / exit              Shut down
 """
@@ -897,6 +906,21 @@ def _apply_terminal_command(line: str) -> bool:
     elif cmd == "getready":
         state.apply_get_ready()
         print("  -> state=Running")
+    elif cmd in ("no_ack", "noack"):
+        count = 1
+        if len(parts) >= 2:
+            try:
+                count = int(parts[1])
+                if count < 0:
+                    raise ValueError
+            except ValueError:
+                print("Count must be a non-negative integer")
+                return True
+        state.suppress_ack_count = count
+        if count > 0:
+            print(f"  -> Suppressing next {state.suppress_ack_count} ACK(s)")
+        else:
+            print("  -> ACK suppression cleared")
     elif cmd == "state":
         if len(parts) < 2:
             print("Usage: state <0|1|2>")
@@ -1022,6 +1046,9 @@ def _apply_set(var: str, val: str) -> None:
         elif var == "SysLocation":
             state.sys_location = val
             print(f"  -> SysLocation={state.sys_location}")
+        elif var in ("SuppressAckCount", "SuppressAck", "NoAck"):
+            state.suppress_ack_count = max(0, int(val))
+            print(f"  -> SuppressAckCount={state.suppress_ack_count}")
         else:
             print(f"Unknown variable: {var!r}")
     except ValueError as exc:

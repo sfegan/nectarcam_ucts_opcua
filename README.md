@@ -222,6 +222,7 @@ python ucts_client.py --endpoint opc.tcp://localhost:4840/ucts/
 | `status <hex_or_dec>` | Set raw status word directly |
 | `reset` | Apply Reset command (state=Online, counters=0) |
 | `getready` | Apply GetReady command (state=Running) |
+| `no_ack [n]` | Suppress next `n` UDP command ACKs (default 1) |
 | `help` | Show full command help |
 | `quit` / `exit` | Shut down |
 
