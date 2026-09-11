@@ -166,7 +166,7 @@ class UCTSClient:
         # probe and cause the client to wrongly mark itself disconnected --
         # even though the server is still alive and working. Raise it well
         # above the server's worst-case single-command time.
-        self._client = Client(self.endpoint, watchdog_intervall=5.0)
+        self._client = Client(self.endpoint)
         if self.user:
             self._client.set_user(self.user)
         if self.password:
