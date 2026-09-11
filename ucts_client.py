@@ -158,7 +158,15 @@ class UCTSClient:
         self._node_name_map: Dict[str, str] = {}
 
     async def connect(self) -> None:
-        self._client = Client(self.endpoint)
+        # Default watchdog_intervall (1.0s) sends an internal health-probe
+        # request every second and expects an answer within that same
+        # second. The OPC UA server processes requests on the channel
+        # sequentially, so any single slow method call (e.g. the UDP
+        # command retry loop, up to ~2.0s on ACK timeout) can starve that
+        # probe and cause the client to wrongly mark itself disconnected --
+        # even though the server is still alive and working. Raise it well
+        # above the server's worst-case single-command time.
+        self._client = Client(self.endpoint, watchdog_intervall=5.0)
         if self.user:
             self._client.set_user(self.user)
         if self.password:
