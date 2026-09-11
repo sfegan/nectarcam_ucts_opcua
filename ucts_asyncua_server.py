@@ -1057,6 +1057,32 @@ class UCTSCommander:
         """
         commander = self
 
+        # Tasks created here aren't referenced anywhere else; asyncio only
+        # holds a weak reference to a bare task, so without keeping it in
+        # this set it could be garbage-collected mid-sleep/mid-reload. The
+        # done-callback removes it again once it finishes.
+        _background_tasks: set[asyncio.Task] = set()
+
+        def _schedule_reload() -> None:
+            """
+            Fire-and-forget: wait POST_CMD_RELOAD_DELAY, then trigger a
+            forced SNMP reload -- without blocking the calling OPC UA
+            method's return on either the delay or the reload itself.
+            """
+            if poller is None:
+                return
+
+            async def _do_reload() -> None:
+                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
+                try:
+                    await poller.force_reload()
+                except Exception:
+                    log.exception("Background force_reload failed")
+
+            task = asyncio.create_task(_do_reload())
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+
         @uamethod
         async def Configure(parent,
                             PC_IP_ADDRESS:   str,
@@ -1077,27 +1103,24 @@ class UCTSCommander:
                 )
             rc  = await commander.set_dst_mac(PC_MAC_ADDRESS.strip())
             rc |= await commander.set_dst_ip(PC_IP_ADDRESS.strip())
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def Start(parent) -> int:
             log.info("Start -> %s:%d", commander.ucts_ip, commander.ucts_cmd_port)
             rc = await commander.get_ready()
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def Reset(parent) -> int:
             log.info("Reset -> %s:%d", commander.ucts_ip, commander.ucts_cmd_port)
             rc = await commander.reset()
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
@@ -1118,45 +1141,40 @@ class UCTSCommander:
             idx = XML_Message.find("<")
             xml_body = XML_Message[idx:] if idx >= 0 else XML_Message
             rc = await commander.xml_configuration(xml_body)
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def SetDstIpAddress(parent, ip_address: str) -> int:
             log.info("SetDstIpAddress: %s", ip_address)
             rc = await commander.set_dst_ip(ip_address.strip())
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def SetDstPort(parent, port: int) -> int:
             log.info("SetDstPort: %d", port)
             rc = await commander.set_dst_port(int(port))
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def SetDstMacAddress(parent, mac_address: str) -> int:
             log.info("SetDstMacAddress: %s", mac_address)
             rc = await commander.set_dst_mac(mac_address.strip())
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         @uamethod
         async def SetUseSpiReception(parent, enable: bool) -> int:
             log.info("SetUseSpiReception: %s", enable)
             rc = await commander.set_use_spi_reception(bool(enable))
-            if rc == 0 and poller is not None:
-                await asyncio.sleep(commander.POST_CMD_RELOAD_DELAY)
-                await poller.force_reload()
+            if rc == 0:
+                _schedule_reload()
             return int(rc)
 
         def _arg(name: str, type_node_id: ua.NodeId) -> ua.Argument:
