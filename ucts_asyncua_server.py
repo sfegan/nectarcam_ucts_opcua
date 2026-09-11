@@ -146,8 +146,8 @@ log = logging.getLogger("ucts_asyncua_server")
 # computed and their store entries updated in write_variables().
 # ─────────────────────────────────────────────────────────────────────────────
 
-_UDP_TIMEOUT      = 0.1   # seconds to wait for a single TiCkS echo-back attempt
-_UDP_MAX_ATTEMPTS = 5     # resends on ACK timeout (5 * 0.1s = 0.5s total budget)
+_UDP_TIMEOUT      = 0.15  # seconds to wait for a single TiCkS echo-back attempt
+_UDP_MAX_ATTEMPTS = 5     # resends on ACK timeout (5 * 0.15s = 0.75s total budget)
 
 _TAI_UTC_DELTA = 37    # TAI − UTC in seconds; last updated 2016-12-31 (IERS bulletin C 53)
                        # Check https://www.ietf.org/timezones/data/leap-seconds.list if updating
